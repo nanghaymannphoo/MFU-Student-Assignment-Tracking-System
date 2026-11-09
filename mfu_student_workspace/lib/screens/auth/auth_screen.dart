@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:mfu_student_workspace/models/api_models.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/workspace_store.dart';
 import '../../navigation/main_navigation_shell.dart';
@@ -16,16 +18,14 @@ class _AuthScreenState extends State<AuthScreen> {
   bool obscurePassword = true;
   bool obscureConfirmPassword = true;
 
-  final TextEditingController _studentIdCtrl =
-      TextEditingController(text: '6731501105');
-  final TextEditingController _nameCtrl =
-      TextEditingController(text: 'Nang Hay Man Phoo');
-  final TextEditingController _emailCtrl =
-      TextEditingController(text: '6731501105@lamduan.mfu.ac.th');
-  final TextEditingController _passwordCtrl =
-      TextEditingController(text: '123456');
-  final TextEditingController _confirmPasswordCtrl =
-      TextEditingController(text: '123456');
+  final TextEditingController _studentIdCtrl = TextEditingController();
+  final TextEditingController _nameCtrl = TextEditingController();
+  final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _passwordCtrl = TextEditingController();
+  final TextEditingController _confirmPasswordCtrl = TextEditingController();
+
+  final _authController = AuthController();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -37,43 +37,84 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  void _handleSubmit() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    if (!isLogin) {
-      if (_passwordCtrl.text != _confirmPasswordCtrl.text) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Passwords do not match. Please verify your password.'),
-            backgroundColor: AppColors.danger,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        return;
-      }
-
-      WorkspaceStore.currentUserName = _nameCtrl.text.trim();
-      WorkspaceStore.currentStudentId = _studentIdCtrl.text.trim();
-      WorkspaceStore.currentEmail = _emailCtrl.text.trim();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Account created successfully! You can now log in.'),
-          backgroundColor: AppColors.primary,
+  void _showMessage(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
           behavior: SnackBarBehavior.floating,
         ),
       );
-      setState(() => isLogin = true);
+  }
+
+  /// เก็บข้อมูลผู้ใช้ไว้ใน WorkspaceStore เพื่อให้หน้าอื่นที่ยังอ่านจาก store ใช้ต่อได้
+  void _applyUser(UserModel user) {
+    WorkspaceStore.currentStudentId = user.studentId;
+    WorkspaceStore.currentUserName = user.fullName;
+    WorkspaceStore.currentEmail = user.email;
+  }
+
+  Future<void> _handleSubmit() async {
+    if (_loading) return;
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _loading = true);
+    try {
+      if (isLogin) {
+        await _login();
+      } else {
+        await _register();
+      }
+    } on ApiException catch (e) {
+      _showMessage(e.message, isError: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _login() async {
+    final user = await _authController.login(
+      _studentIdCtrl.text.trim(),
+      _passwordCtrl.text,
+    );
+    if (!mounted) return;
+
+    // login() คืน null เมื่อ student id / password ไม่ถูกต้อง (HTTP 401)
+    if (user == null) {
+      _showMessage('Student ID or password is incorrect.', isError: true);
       return;
     }
 
-    // Login -> Navigate to Main Shell (Page 2, 5, 6)
+    _applyUser(user);
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const MainNavigationShell()),
     );
+  }
+
+  Future<void> _register() async {
+    if (_passwordCtrl.text != _confirmPasswordCtrl.text) {
+      _showMessage('Passwords do not match. Please verify your password.',
+          isError: true);
+      return;
+    }
+
+    await _authController.register(
+      studentId: _studentIdCtrl.text.trim(),
+      fullName: _nameCtrl.text.trim(),
+      email: _emailCtrl.text.trim(),
+      password: _passwordCtrl.text,
+    );
+    if (!mounted) return;
+
+    _showMessage('Account created successfully! You can now log in.');
+    // กลับไปแท็บ Log In โดยคง Student ID ไว้ แต่ล้างรหัสผ่าน
+    _passwordCtrl.clear();
+    _confirmPasswordCtrl.clear();
+    setState(() => isLogin = true);
   }
 
   @override
@@ -345,8 +386,17 @@ class _AuthScreenState extends State<AuthScreen> {
                             width: double.infinity,
                             height: 48,
                             child: FilledButton(
-                              onPressed: _handleSubmit,
-                              child: Text(isLogin ? 'Log In to Workspace' : 'Create Account'),
+                              onPressed: _loading ? null : _handleSubmit,
+                              child: _loading
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(isLogin ? 'Log In to Workspace' : 'Create Account'),
                             ),
                           ),
                         ],
@@ -362,8 +412,3 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 }
-
-// ==========================================
-// MAIN SHELL (Bottom Nav: Dashboard | Noti | Profile)
-// ==========================================
-

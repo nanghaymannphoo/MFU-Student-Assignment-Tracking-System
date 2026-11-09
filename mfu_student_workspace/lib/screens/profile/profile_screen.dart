@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mfu_student_workspace/models/api_models.dart';
+import '../../controller/api_controller.dart';
+import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/workspace_store.dart';
 import '../auth/auth_screen.dart';
@@ -15,11 +18,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _nameCtrl;
   late TextEditingController _emailCtrl;
 
+  final _userController = UserController();
+  final _projectController = ProjectController();
+  final _authController = AuthController();
+
+  bool _loading = true; // กำลังโหลดโปรไฟล์จาก server
+  bool _saving = false; // กำลังบันทึก
+  int? _projectCount; // จำนวนโปรเจคจาก API (null = ยังไม่โหลด)
+
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: WorkspaceStore.currentUserName);
     _emailCtrl = TextEditingController(text: WorkspaceStore.currentEmail);
+    _loadProfile();
+  }
+
+  void _showMessage(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
+          content: Text(text),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  /// token หมดอายุ / ไม่ถูกต้อง -> กลับหน้า login
+  void _goToLogin() {
+    WorkspaceStore.currentStudentId = '';
+    WorkspaceStore.currentUserName = '';
+    WorkspaceStore.currentEmail = '';
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final me = await _userController.getMe();
+      final projects = await _projectController.getProjects();
+      if (!mounted) return;
+      setState(() {
+        WorkspaceStore.currentStudentId = me.studentId;
+        WorkspaceStore.currentUserName = me.fullName;
+        WorkspaceStore.currentEmail = me.email;
+        _nameCtrl.text = me.fullName;
+        _emailCtrl.text = me.email;
+        _projectCount = projects.length;
+      });
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        _goToLogin();
+      } else {
+        _showMessage(e.message, isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -29,19 +89,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  void _saveProfile() {
+  Future<void> _saveProfile() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
-    setState(() {
-      WorkspaceStore.currentUserName = _nameCtrl.text.trim();
-      WorkspaceStore.currentEmail = _emailCtrl.text.trim();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: AppColors.primary,
-        content: Text('Profile details updated successfully!'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+
+    final newName = _nameCtrl.text.trim();
+    if (newName == WorkspaceStore.currentUserName) {
+      _showMessage('No changes to save.');
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      // backend รองรับเฉพาะ fullName / avatarUrl / รหัสผ่าน (ยังแก้ email ไม่ได้)
+      await _userController.updateMe(fullName: newName);
+      if (!mounted) return;
+      setState(() => WorkspaceStore.currentUserName = newName);
+      _showMessage('Profile details updated successfully!');
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        _goToLogin();
+      } else {
+        _showMessage(e.message, isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _confirmLogout() {
@@ -66,12 +139,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               backgroundColor: AppColors.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) => const AuthScreen()),
-              );
+              // logout() ลบ token ในเครื่องเสมอ แม้ server จะไม่ตอบ
+              await _authController.logout();
+              if (!mounted) return;
+              _goToLogin();
             },
             child: const Text('Log Out'),
           ),
@@ -137,7 +210,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
                 child: Row(
                   children: [
-                    _buildProfileStat('Projects', '${WorkspaceStore.projects.length}'),
+                    _buildProfileStat('Projects', '${_projectCount ?? WorkspaceStore.projects.length}'),
                     const SizedBox(
                       height: 32,
                       child: VerticalDivider(color: AppColors.border),
@@ -167,17 +240,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               TextFormField(
                 controller: _emailCtrl,
                 style: const TextStyle(color: AppColors.textPrimary),
+                readOnly: true, // backend ยังไม่รองรับการแก้ email
                 decoration: const InputDecoration(
-                  labelText: 'Lamduan Mail *',
+                  labelText: 'Lamduan Mail',
+                  helperText: 'Email cannot be changed',
                   prefixIcon: Icon(Icons.alternate_email),
                 ),
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Please enter your email';
-                  if (!v.trim().toLowerCase().endsWith('@lamduan.mfu.ac.th')) {
-                    return 'Must end with @lamduan.mfu.ac.th';
-                  }
-                  return null;
-                },
               ),
               const SizedBox(height: 24),
 
@@ -185,9 +253,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 width: double.infinity,
                 height: 48,
                 child: FilledButton.icon(
-                  onPressed: _saveProfile,
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('Save Changes'),
+                  onPressed: (_saving || _loading) ? null : _saveProfile,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.save_outlined, size: 18),
+                  label: Text(_saving ? 'Saving...' : 'Save Changes'),
                 ),
               ),
               const SizedBox(height: 12),
