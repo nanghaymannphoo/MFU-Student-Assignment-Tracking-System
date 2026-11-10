@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../models/api_models.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_picker_utils.dart';
 import '../../core/utils/status_helpers.dart';
@@ -34,6 +36,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final courseCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final deadlineCtrl = TextEditingController(text: '2026-12-01');
+    final projectController = ProjectController();
+    final saving = ValueNotifier<bool>(false);
+    final serverError = ValueNotifier<String?>(null);
 
     showModalBottomSheet(
       context: context,
@@ -128,48 +133,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Please select a deadline' : null,
                 ),
                 const SizedBox(height: 20),
+                // error จาก server (แสดงในชีต เพื่อให้แก้แล้วกดซ้ำได้)
+                ValueListenableBuilder<String?>(
+                  valueListenable: serverError,
+                  builder: (_, err, __) => err == null
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(
+                            err,
+                            style: const TextStyle(color: AppColors.danger, fontSize: 12.5),
+                          ),
+                        ),
+                ),
                 SizedBox(
                   width: double.infinity,
                   height: 46,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-                    onPressed: () {
-                      if (!formKey.currentState!.validate()) return;
-                      setState(() {
-                        WorkspaceStore.projects.insert(
-                          0,
-                          ProjectModel(
-                            id: DateTime.now().millisecondsSinceEpoch.toString(),
-                            title: titleCtrl.text.trim(),
-                            courseCode: courseCtrl.text.trim(),
-                            description: descCtrl.text.trim().isEmpty
-                                ? 'No project description provided.'
-                                : descCtrl.text.trim(),
-                            deadline: deadlineCtrl.text.trim(),
-                            myRole: 'PC',
-                            members: [
-                              TeamMember(
-                                studentId: WorkspaceStore.currentStudentId,
-                                name: WorkspaceStore.currentUserName.split(' ').first,
-                                role: 'PC',
-                              ),
-                            ],
-                            tasks: [],
-                          ),
-                        );
-                      });
-                      widget.onRefresh();
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Project created successfully! You are the Coordinator.'),
-                          backgroundColor: AppColors.primary,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Create Project'),
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: saving,
+                    builder: (_, isSaving, __) => FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              if (!formKey.currentState!.validate()) return;
+                              serverError.value = null;
+                              saving.value = true;
+                              try {
+                                final description = descCtrl.text.trim();
+                                // POST /api/projects -> ผู้สร้างเป็น PC อัตโนมัติ, คืน id จริงจาก server
+                                final newId = await projectController.createProject(
+                                  title: titleCtrl.text.trim(),
+                                  courseCode: courseCtrl.text.trim(),
+                                  description: description.isEmpty ? null : description,
+                                  deadline: deadlineCtrl.text.trim(),
+                                );
+                                if (!mounted) return;
+                                setState(() {
+                                  WorkspaceStore.projects.insert(
+                                    0,
+                                    ProjectModel(
+                                      id: newId,
+                                      title: titleCtrl.text.trim(),
+                                      courseCode: courseCtrl.text.trim(),
+                                      description: description.isEmpty
+                                          ? 'No project description provided.'
+                                          : description,
+                                      deadline: deadlineCtrl.text.trim(),
+                                      myRole: 'PC',
+                                      members: [
+                                        TeamMember(
+                                          studentId: WorkspaceStore.currentStudentId,
+                                          name: WorkspaceStore.currentUserName.split(' ').first,
+                                          role: 'PC',
+                                        ),
+                                      ],
+                                      tasks: [],
+                                    ),
+                                  );
+                                });
+                                widget.onRefresh();
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Project created successfully! You are the Coordinator.'),
+                                    backgroundColor: AppColors.primary,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              } on ApiException catch (e) {
+                                serverError.value = e.message;
+                              } finally {
+                                saving.value = false;
+                              }
+                            },
+                      icon: isSaving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.add, size: 18),
+                      label: Text(isSaving ? 'Creating...' : 'Create Project'),
+                    ),
                   ),
                 ),
               ],

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../models/api_models.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/status_helpers.dart';
 import '../../models/project_model.dart';
@@ -30,11 +32,56 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   // Set of member student IDs whose task lists are expanded in the Members tab
   final Set<String> _expandedMemberIds = {};
 
+  final _projectController = ProjectController();
+  final _memberController = MemberController();
+  final _userController = UserController();
+  bool _announcing = false;
+
   @override
   void initState() {
     super.initState();
     // Check overdue tasks and notify on entry
     WorkspaceStore.checkOverdueTasksAndNotify();
+  }
+
+  void _snack(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
+          content: Text(text),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  // POST /api/projects/:id/announce (PC เท่านั้น) -> แจ้งเตือนสมาชิกทุกคน
+  Future<void> _announceToTeam() async {
+    if (_announcing) return;
+    setState(() => _announcing = true);
+    try {
+      final title = 'Team Reminder: ${widget.project.title}';
+      const message = '🔔 Coordinator sent a reminder regarding upcoming deadlines.';
+      final sent = await _projectController.announce(
+        widget.project.id,
+        title: title,
+        message: message,
+      );
+      // TODO: ลบเมื่อหน้า Notifications ดึงจาก API (ตอนนี้ยังอ่านจาก store ในเครื่อง)
+      WorkspaceStore.onProjectAnnouncement(
+        project: widget.project,
+        title: title,
+        message: message,
+        actorStudentId: WorkspaceStore.currentStudentId,
+      );
+      _snack('Reminder sent to $sent team member${sent == 1 ? '' : 's'}!');
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+    } finally {
+      if (mounted) setState(() => _announcing = false);
+    }
   }
 
   // ==========================================
@@ -43,6 +90,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   void _showAddMemberBottomSheet() {
     final formKey = GlobalKey<FormState>();
     final studentIdCtrl = TextEditingController();
+    final adding = ValueNotifier<bool>(false);
+    final serverError = ValueNotifier<String?>(null);
 
     showModalBottomSheet(
       context: context,
@@ -120,6 +169,18 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     return null;
                   },
                 ),
+                ValueListenableBuilder<String?>(
+                  valueListenable: serverError,
+                  builder: (_, err, __) => err == null
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            err,
+                            style: const TextStyle(color: AppColors.danger, fontSize: 12.5),
+                          ),
+                        ),
+                ),
                 const SizedBox(height: 20),
                 Row(
                   children: [
@@ -135,41 +196,64 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          minimumSize: const Size(0, 46),
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: adding,
+                        builder: (_, isAdding, __) => FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            minimumSize: const Size(0, 46),
+                          ),
+                          onPressed: isAdding
+                              ? null
+                              : () async {
+                                  if (!formKey.currentState!.validate()) return;
+                                  final id = studentIdCtrl.text.trim();
+                                  serverError.value = null;
+                                  adding.value = true;
+                                  try {
+                                    // POST /api/projects/:id/members (404 = ไม่มีผู้ใช้, 409 = เป็นสมาชิกอยู่แล้ว)
+                                    await _memberController.addMember(widget.project.id, id);
+
+                                    // ดึงชื่อมาแสดง (best effort: ถ้าไม่ได้ ใช้ Student ID แทน)
+                                    var name = id;
+                                    try {
+                                      final user = await _userController.getUser(id);
+                                      if (user != null && user.fullName.isNotEmpty) {
+                                        name = user.fullName;
+                                      }
+                                    } catch (_) {}
+
+                                    if (!mounted) return;
+                                    setState(() {
+                                      widget.project.members.add(
+                                        TeamMember(
+                                          studentId: id,
+                                          name: name,
+                                          role: 'Member', // Automatically set to Member
+                                        ),
+                                      );
+                                    });
+                                    if (ctx.mounted) Navigator.pop(ctx);
+                                    _snack(
+                                      name == id
+                                          ? 'Added Student ID $id as Member'
+                                          : 'Added $name (ID: $id) as Member',
+                                    );
+                                  } on ApiException catch (e) {
+                                    serverError.value = e.message;
+                                  } finally {
+                                    adding.value = false;
+                                  }
+                                },
+                          icon: isAdding
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.add, size: 18),
+                          label: Text(isAdding ? 'Adding...' : 'Add Member'),
                         ),
-                        onPressed: () {
-                          if (!formKey.currentState!.validate()) return;
-                          final id = studentIdCtrl.text.trim();
-                          final name = WorkspaceStore.resolveMemberName(id);
-
-                          setState(() {
-                            widget.project.members.add(
-                              TeamMember(
-                                studentId: id,
-                                name: name,
-                                role: 'Member', // Automatically set to Member
-                              ),
-                            );
-                          });
-
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                name == id
-                                    ? 'Added Student ID $id as Member'
-                                    : 'Added $name (ID: $id) as Member',
-                              ),
-                              backgroundColor: AppColors.primary,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add Member'),
                       ),
                     ),
                   ],
@@ -604,21 +688,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           if (isPC)
             IconButton(
               tooltip: 'Notify All Members',
-              onPressed: () {
-                WorkspaceStore.onProjectAnnouncement(
-                  project: widget.project,
-                  title: 'Team Reminder: ${widget.project.title}',
-                  message: '🔔 Coordinator sent a reminder regarding upcoming deadlines.',
-                  actorStudentId: WorkspaceStore.currentStudentId,
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    backgroundColor: AppColors.primary,
-                    content: Text('Reminder broadcasted to team members!'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
+              onPressed: _announcing ? null : _announceToTeam,
               icon: const Icon(Icons.campaign_outlined, color: AppColors.primary),
             ),
         ],

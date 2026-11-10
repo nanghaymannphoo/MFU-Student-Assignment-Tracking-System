@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:mfu_student_workspace/models/api_models.dart';
+import '../../models/api_models.dart';
 import '../../controller/api_controller.dart';
-import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/workspace_store.dart';
 import '../auth/auth_screen.dart';
