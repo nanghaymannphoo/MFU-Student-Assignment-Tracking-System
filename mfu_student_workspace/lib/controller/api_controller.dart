@@ -332,3 +332,212 @@ class MemberController extends BaseController {
     });
   }
 }
+
+// ================= task =================
+class TaskController extends BaseController {
+  // list -> GET /api/projects/:projectId/tasks (สมาชิกของโปรเจคเท่านั้น)
+  Future<List<TaskData>> getTasks(String projectId) {
+    return guard(() async {
+      final response = await http.get(
+        Uri.parse('$baseURL/projects/$projectId/tasks'),
+        headers: await authHeaders(),
+      );
+      List<dynamic> data = decode(response);
+      return data.map((json) => TaskData.fromJSON(json)).toList();
+    });
+  }
+
+  // get -> GET /api/tasks/:id (มี myRole ของฉันในโปรเจคนี้มาด้วย)
+  Future<TaskData> getTask(String id) {
+    return guard(() async {
+      final response = await http.get(
+        Uri.parse('$baseURL/tasks/$id'),
+        headers: await authHeaders(),
+      );
+      return TaskData.fromJSON(decode(response));
+    });
+  }
+
+  // create -> POST /api/projects/:projectId/tasks (PC เท่านั้น) คืน id ของงานใหม่
+  // assignedTo ต้องเป็นสมาชิกของโปรเจคนี้ (ไม่ใส่ = ยังไม่มอบหมาย)
+  Future<String> createTask(
+    String projectId, {
+    required String title,
+    String? description,
+    String? assignedTo,
+    String? dueDate, // YYYY-MM-DD
+  }) {
+    return guard(() async {
+      final response = await http.post(
+        Uri.parse('$baseURL/projects/$projectId/tasks'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode({
+          'title': title,
+          'description': description,
+          'assigned_to': assignedTo,
+          'due_date': dueDate,
+        }),
+      );
+      Map<String, dynamic> data = decode(response);
+      return data['id'] as String;
+    });
+  }
+
+  // update -> PUT /api/tasks/:id (PC เท่านั้น) ส่งเฉพาะช่องที่แก้
+  // dueDate: '' = ลบวันกำหนดส่ง | เปลี่ยนวัน = แจ้งผู้รับงานอัตโนมัติ (Extend Deadline)
+  Future<void> updateTask(
+    String id, {
+    String? title,
+    String? description,
+    String? dueDate,
+  }) {
+    return guard(() async {
+      final body = <String, dynamic>{
+        if (title != null) 'title': title,
+        if (description != null) 'description': description,
+        if (dueDate != null) 'due_date': dueDate,
+      };
+      final response = await http.put(
+        Uri.parse('$baseURL/tasks/$id'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode(body),
+      );
+      decode(response);
+    });
+  }
+
+  // status -> PATCH /api/tasks/:id/status (PC หรือผู้รับงาน)
+  // status: 'TODO' | 'IN_PROGRESS' | 'DONE'
+  Future<void> updateStatus(String id, String status) {
+    return guard(() async {
+      final response = await http.patch(
+        Uri.parse('$baseURL/tasks/$id/status'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode({'status': status}),
+      );
+      decode(response);
+    });
+  }
+
+  // assign -> PATCH /api/tasks/:id/assign (PC เท่านั้น) studentId = null ยกเลิกการมอบหมาย
+  Future<void> assignTask(String id, String? studentId) {
+    return guard(() async {
+      final response = await http.patch(
+        Uri.parse('$baseURL/tasks/$id/assign'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode({'assigned_to': studentId}),
+      );
+      decode(response);
+    });
+  }
+
+  // submit -> POST /api/tasks/:id/submission (ผู้รับงานหรือ PC) เก็บลิงก์ของงานที่ส่ง
+  Future<void> submitWork(String id, String submissionUrl) {
+    return guard(() async {
+      final response = await http.post(
+        Uri.parse('$baseURL/tasks/$id/submission'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode({'submission_url': submissionUrl}),
+      );
+      decode(response);
+    });
+  }
+
+  // delete -> DELETE /api/tasks/:id (PC เท่านั้น)
+  Future<void> deleteTask(String id) {
+    return guard(() async {
+      final response = await http.delete(
+        Uri.parse('$baseURL/tasks/$id'),
+        headers: await authHeaders(),
+      );
+      decode(response);
+    });
+  }
+}
+
+// ================= comment =================
+class CommentController extends BaseController {
+  // list -> GET /api/tasks/:taskId/comments (เก่า -> ใหม่)
+  Future<List<CommentData>> getComments(String taskId) {
+    return guard(() async {
+      final response = await http.get(
+        Uri.parse('$baseURL/tasks/$taskId/comments'),
+        headers: await authHeaders(),
+      );
+      List<dynamic> data = decode(response);
+      return data.map((json) => CommentData.fromJSON(json)).toList();
+    });
+  }
+
+  // add -> POST /api/tasks/:taskId/comments คืนคอมเมนต์ที่เพิ่ง (มี id และเวลาจริงจาก server)
+  Future<CommentData> addComment(String taskId, String text) {
+    return guard(() async {
+      final response = await http.post(
+        Uri.parse('$baseURL/tasks/$taskId/comments'),
+        headers: await authHeaders(json: true),
+        body: jsonEncode({'comment_text': text}),
+      );
+      return CommentData.fromJSON(decode(response));
+    });
+  }
+
+  // delete -> DELETE /api/comments/:id (ลบได้เฉพาะของตัวเอง)
+  // 404 = ไม่พบ หรือไม่ใช่ของฉัน (ข้อความอยู่ใน ApiException.message)
+  Future<void> deleteComment(int commentId) {
+    return guard(() async {
+      final response = await http.delete(
+        Uri.parse('$baseURL/comments/$commentId'),
+        headers: await authHeaders(),
+      );
+      decode(response);
+    });
+  }
+}
+
+// ================= notification =================
+class NotificationController extends BaseController {
+  // list -> GET /api/notifications (ของฉัน ใหม่ -> เก่า)
+  Future<List<NotificationData>> getNotifications() {
+    return guard(() async {
+      final response = await http.get(
+        Uri.parse('$baseURL/notifications'),
+        headers: await authHeaders(),
+      );
+      List<dynamic> data = decode(response);
+      return data.map((json) => NotificationData.fromJSON(json)).toList();
+    });
+  }
+
+  // mark read -> PATCH /api/notifications/:id/read (เฉพาะของฉัน)
+  Future<void> markRead(String id) {
+    return guard(() async {
+      final response = await http.patch(
+        Uri.parse('$baseURL/notifications/$id/read'),
+        headers: await authHeaders(),
+      );
+      decode(response);
+    });
+  }
+
+  // mark all read -> PATCH /api/notifications/read-all
+  Future<void> markAllRead() {
+    return guard(() async {
+      final response = await http.patch(
+        Uri.parse('$baseURL/notifications/read-all'),
+        headers: await authHeaders(),
+      );
+      decode(response);
+    });
+  }
+
+  // delete -> DELETE /api/notifications/:id (ลบได้เฉพาะของตัวเอง)
+  Future<void> deleteNotification(String id) {
+    return guard(() async {
+      final response = await http.delete(
+        Uri.parse('$baseURL/notifications/$id'),
+        headers: await authHeaders(),
+      );
+      decode(response);
+    });
+  }
+}

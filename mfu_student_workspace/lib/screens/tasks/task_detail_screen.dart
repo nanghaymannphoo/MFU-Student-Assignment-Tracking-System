@@ -275,8 +275,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                 value: m.studentId,
                                 child: Text(
                                   m.name == m.studentId
-                                      ? 'ID: ${m.studentId} (${m.role})'
-                                      : '${m.name} (${m.role})',
+                                      ? 'ID: ${m.studentId} (${formatRole(m.role)})'
+                                      : '${m.name} (${formatRole(m.role)})',
                                 ),
                               ))
                           .toList(),
@@ -318,7 +318,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 orElse: () => TeamMember(
                   studentId: selectedStudentId,
                   name: widget.task.assignedTo,
-                  role: 'Member',
+                  role: 'MEMBER',
                 ),
               );
 
@@ -588,7 +588,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         ],
                         onChanged: (val) {
                           if (val != null) {
-                            setState(() => widget.task.status = val);
+                            setState(() => widget.task.setStatus(val));
                             WorkspaceStore.onStatusChanged(
                               project: widget.project,
                               task: widget.task,
@@ -673,7 +673,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                     if (!_uploadFormKey.currentState!.validate()) return;
                                     setState(() {
                                       widget.task.submissionUrl = _uploadUrlCtrl.text.trim();
-                                      widget.task.status = 'DONE';
+                                      widget.task.submittedAt = DateTime.now();
+                                      widget.task.setStatus('DONE');
                                     });
                                     WorkspaceStore.onWorkSubmitted(
                                       project: widget.project,
@@ -834,7 +835,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                       borderRadius: BorderRadius.circular(6),
                                     ),
                                     child: Text(
-                                      c.authorRole,
+                                      formatRole(c.authorRole),
                                       style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.gold),
                                     ),
                                   ),
@@ -843,6 +844,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                     c.timeAgo,
                                     style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                                   ),
+                                  if (c.authorStudentId == WorkspaceStore.currentStudentId) ...[
+                                    const SizedBox(width: 6),
+                                    IconButton(
+                                      tooltip: 'Delete comment',
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      iconSize: 16,
+                                      color: AppColors.textSecondary,
+                                      icon: const Icon(Icons.delete_outline_rounded),
+                                      onPressed: () => _confirmDeleteComment(c),
+                                    ),
+                                  ],
                                 ],
                               ),
                               const SizedBox(height: 6),
@@ -911,10 +925,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       setState(() {
                         widget.task.comments.add(
                           CommentItem(
+                            id: commentId,
+                            authorStudentId: WorkspaceStore.currentStudentId,
                             authorName: WorkspaceStore.currentUserName.split(' ').first,
                             authorRole: widget.project.myRole,
                             text: text,
-                            timeAgo: 'Just now',
+                            createdAt: DateTime.now(),
                           ),
                         );
                         _commentCtrl.clear();
@@ -937,6 +953,48 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteComment(CommentItem comment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Delete Comment',
+          style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        ),
+        content: const Text('Delete this comment? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // Only the author may delete a comment (same rule as the database API).
+    final removed = WorkspaceStore.deleteCommentIfAuthor(
+      task: widget.task,
+      commentId: comment.id,
+      actorStudentId: WorkspaceStore.currentStudentId,
+    );
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(removed ? 'Comment deleted' : 'You can only delete your own comments'),
+        backgroundColor: removed ? AppColors.primary : AppColors.danger,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

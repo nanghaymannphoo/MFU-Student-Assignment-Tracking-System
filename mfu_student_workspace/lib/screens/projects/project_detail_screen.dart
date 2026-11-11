@@ -229,7 +229,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                         TeamMember(
                                           studentId: id,
                                           name: name,
-                                          role: 'Member', // Automatically set to Member
+                                          role: 'MEMBER', // Automatically set to MEMBER
                                         ),
                                       );
                                     });
@@ -357,8 +357,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                   value: m.studentId,
                                   child: Text(
                                     m.name == m.studentId
-                                        ? 'ID: ${m.studentId} (${m.role})'
-                                        : '${m.name} (${m.role})',
+                                        ? 'ID: ${m.studentId} (${formatRole(m.role)})'
+                                        : '${m.name} (${formatRole(m.role)})',
                                   ),
                                 ))
                             .toList(),
@@ -395,7 +395,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                               orElse: () => TeamMember(
                                 studentId: selectedStudentId,
                                 name: selectedStudentId,
-                                role: 'Member',
+                                role: 'MEMBER',
                               ),
                             );
 
@@ -1024,7 +1024,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     ),
                   ),
                   Text(
-                    '1 PC, ${widget.project.members.where((m) => m.role == 'Member').length} Members',
+                    '1 PC, ${widget.project.members.where((m) => m.role == 'MEMBER').length} Members',
                     style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ],
@@ -1498,7 +1498,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             return;
                           }
                           setState(() {
-                            task.status = val;
+                            task.setStatus(val);
                           });
                           WorkspaceStore.onStatusChanged(
                             project: widget.project,

@@ -35,6 +35,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  void _deleteNotification(AppNotification n) {
+    // Only the recipient may delete a notification (same rule as the database API).
+    final removed = WorkspaceStore.deleteNotificationIfRecipient(
+      notificationId: n.id,
+      actorStudentId: WorkspaceStore.currentStudentId,
+    );
+    if (!removed) return;
+    setState(() {});
+    widget.onRefresh();
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Notification deleted'),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   void _handleNotificationTap(AppNotification n) async {
     // 1. Immediately mark notification as read and update unread badges
     if (!n.isRead) {
@@ -382,6 +402,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                             ),
                                           ],
                                         ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Delete notification',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        iconSize: 18,
+                                        color: AppColors.textSecondary,
+                                        icon: const Icon(Icons.delete_outline_rounded),
+                                        onPressed: () => _deleteNotification(n),
                                       ),
                                     ],
                                   ),

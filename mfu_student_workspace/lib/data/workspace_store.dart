@@ -24,9 +24,9 @@ class WorkspaceStore {
       myRole: 'PC', // Phoo is PC in this project!
       members: [
         TeamMember(studentId: '6731501105', name: 'Phoo', role: 'PC'),
-        TeamMember(studentId: '6731501101', name: 'Menisa', role: 'Member'),
-        TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'Member'),
-        TeamMember(studentId: '6731501108', name: 'Glade', role: 'Member'),
+        TeamMember(studentId: '6731501101', name: 'Menisa', role: 'MEMBER'),
+        TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'MEMBER'),
+        TeamMember(studentId: '6731501108', name: 'Glade', role: 'MEMBER'),
       ],
       tasks: [
         TaskItem(
@@ -40,10 +40,12 @@ class WorkspaceStore {
           submissionUrl: 'https://github.com/mfu-team/db-schema.sql',
           comments: [
             CommentItem(
+              id: 'c2',
+              authorStudentId: '6731501105',
               authorName: 'Phoo',
               authorRole: 'PC',
               text: 'Great job! Make sure argon2id hash column is VARCHAR(255).',
-              timeAgo: '2h ago',
+              createdAt: DateTime.now().subtract(const Duration(hours: 2)),
             ),
           ],
         ),
@@ -77,10 +79,12 @@ class WorkspaceStore {
           status: 'IN_PROGRESS',
           comments: [
             CommentItem(
+              id: 'c1',
+              authorStudentId: '6731501108',
               authorName: 'Glade',
-              authorRole: 'Member',
+              authorRole: 'MEMBER',
               text: 'Working on route integration tests, finishing up mocks.',
-              timeAgo: '1d ago',
+              createdAt: DateTime.now().subtract(const Duration(days: 1)),
             ),
           ],
         ),
@@ -92,11 +96,11 @@ class WorkspaceStore {
       courseCode: '1305202 Database Systems',
       description: 'ER Diagram, Normalization, and SQL Triggers for clinic.',
       deadline: '2026-11-25',
-      myRole: 'Member', // Phoo is Member in this project!
+      myRole: 'MEMBER', // Phoo is a member in this project!
       members: [
         TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'PC'),
-        TeamMember(studentId: '6731501105', name: 'Phoo', role: 'Member'),
-        TeamMember(studentId: '6731501109', name: 'Mary', role: 'Member'),
+        TeamMember(studentId: '6731501105', name: 'Phoo', role: 'MEMBER'),
+        TeamMember(studentId: '6731501109', name: 'Mary', role: 'MEMBER'),
       ],
       tasks: [
         TaskItem(
@@ -109,10 +113,12 @@ class WorkspaceStore {
           status: 'IN_PROGRESS',
           comments: [
             CommentItem(
+              id: 'c3',
+              authorStudentId: '6731501102',
               authorName: 'Puttapoom',
               authorRole: 'PC',
               text: 'Phoo, please upload the .sql link here when finished.',
-              timeAgo: '1d ago',
+              createdAt: DateTime.now().subtract(const Duration(days: 1)),
             ),
           ],
         ),
@@ -222,6 +228,35 @@ class WorkspaceStore {
         n.readAt = now;
       }
     }
+  }
+
+  /// Deletes a notification only if it is addressed to [actorStudentId].
+  /// Returns false when it does not exist or belongs to someone else.
+  static bool deleteNotificationIfRecipient({
+    required String notificationId,
+    required String actorStudentId,
+  }) {
+    final index = notifications.indexWhere(
+      (n) => n.id == notificationId && n.recipientStudentId == actorStudentId,
+    );
+    if (index < 0) return false;
+    notifications.removeAt(index);
+    return true;
+  }
+
+  /// Deletes a comment only if [actorStudentId] wrote it.
+  /// Returns false when it does not exist or belongs to someone else.
+  static bool deleteCommentIfAuthor({
+    required TaskItem task,
+    required String commentId,
+    required String actorStudentId,
+  }) {
+    final index = task.comments.indexWhere(
+      (c) => c.id == commentId && c.authorStudentId == actorStudentId,
+    );
+    if (index < 0) return false;
+    task.comments.removeAt(index);
+    return true;
   }
 
   /// Centralized dispatcher:

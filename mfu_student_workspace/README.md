@@ -1,17 +1,42 @@
-# mfu_student_workspace
+# MFU Student Assignment Tracking System (Flutter app)
 
-A new Flutter project.
+Mobile/web front end for the group project **MFU Student Assignment Tracking System**.
+A project coordinator (PC) creates group projects and assigns tasks; members update status, submit work and comment.
 
-## Getting Started
+## Status
 
-This project is a starting point for a Flutter application.
+- **Partly connected to the API.** Register, login, profile, creating projects and adding/removing members call the backend (`lib/controller/api_controller.dart`, base URL `http://localhost:3000/api`, so a backend must be running to sign in).
+- Everything else (project lists, tasks, comments, notifications) still runs on **mock data** in `lib/data/workspace_store.dart`.
+- Data shapes follow the project database (`mfu_student_assignment_tracking`):
+  - Roles are per project and have two values: `PC` and `MEMBER`.
+  - Every comment has its own `id`, author student id and creation time.
+  - Users can delete only their own comments and notifications.
+  - A task keeps `submittedAt` and `completedAt`.
 
-A few resources to get you started if this is your first Flutter project:
+## Run
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```
+cd mfu_student_workspace
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Sign in with the pre-filled account on the login screen to see the demo data.
+
+## Test
+
+```
+flutter analyze
+flutter test
+```
+
+## Folders (`lib/`)
+
+| Folder | Purpose |
+| :-- | :-- |
+| `models/` | Data classes: project, task, comment, team member, notification |
+| `data/` | `WorkspaceStore` mock data and rules (notifications, delete, deadlines) |
+| `screens/` | Login/register, dashboard, project, task, notifications, profile |
+| `app/`, `navigation/` | App setup and navigation |
+| `core/` | Colors (`constants/`) and helpers (`utils/`: status, deadline, date picker) |
+| `widgets/` | Shared widgets |

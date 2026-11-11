@@ -13,6 +13,16 @@ String formatStatus(String status) {
   }
 }
 
+String formatRole(String role) {
+  switch (role.toUpperCase()) {
+    case 'PC':
+      return 'PC';
+    case 'MEMBER':
+    default:
+      return 'Member';
+  }
+}
+
 IconData getStatusIcon(String status) {
   switch (status.toUpperCase()) {
     case 'DONE':
