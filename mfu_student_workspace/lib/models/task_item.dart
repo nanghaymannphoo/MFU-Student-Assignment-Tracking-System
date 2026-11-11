@@ -9,6 +9,8 @@ class TaskItem {
   String dueDate;
   String status; // 'TODO', 'IN_PROGRESS', 'DONE'
   String? submissionUrl;
+  DateTime? submittedAt; // When work was submitted (tasks.submitted_at)
+  DateTime? completedAt; // When the task became DONE (tasks.completed_at)
   List<CommentItem> comments;
 
   TaskItem({
@@ -20,6 +22,17 @@ class TaskItem {
     required this.dueDate,
     this.status = 'TODO',
     this.submissionUrl,
+    DateTime? submittedAt,
+    DateTime? completedAt,
     List<CommentItem>? comments,
-  }) : comments = comments ?? [];
+  })  : submittedAt = submittedAt ?? (submissionUrl != null ? DateTime.now() : null),
+        completedAt = completedAt ?? (status == 'DONE' ? DateTime.now() : null),
+        comments = comments ?? [];
+
+  /// Changes the status and keeps completedAt in sync:
+  /// DONE sets it, any other status clears it.
+  void setStatus(String newStatus) {
+    status = newStatus;
+    completedAt = newStatus.toUpperCase() == 'DONE' ? DateTime.now() : null;
+  }
 }

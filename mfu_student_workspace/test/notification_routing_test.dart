@@ -23,8 +23,8 @@ void main() {
         myRole: 'PC',
         members: [
           TeamMember(studentId: '6731501105', name: 'Phoo', role: 'PC'),
-          TeamMember(studentId: '6731501101', name: 'Menisa', role: 'Member'),
-          TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'Member'),
+          TeamMember(studentId: '6731501101', name: 'Menisa', role: 'MEMBER'),
+          TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'MEMBER'),
         ],
         tasks: [],
       );
