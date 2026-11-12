@@ -4,6 +4,7 @@ import '../models/comment_item.dart';
 import '../models/task_item.dart';
 import '../models/project_model.dart';
 import '../models/app_notification.dart';
+import '../models/assigned_task_entry.dart';
 
 // ==========================================
 // MOCK CONTROLLER / STATE (MVC - Controller)
@@ -198,6 +199,28 @@ class WorkspaceStore {
   }
 
   // ==========================================
+  // PERSONAL TASK SERVICE (MY TASKS)
+  // ==========================================
+
+  /// Returns all tasks assigned to the signed-in user across projects they belong to.
+  /// Matching strictly by Student ID, never by display name.
+  /// Includes tasks assigned to the user even when they are the project PC.
+  static List<AssignedTaskEntry> getAssignedTasksForCurrentUser({String? studentId}) {
+    final sid = studentId ?? currentStudentId;
+    final List<AssignedTaskEntry> result = [];
+    for (final project in projects) {
+      final isMember = project.members.any((m) => m.studentId == sid);
+      if (!isMember) continue;
+      for (final task in project.tasks) {
+        if (task.assignedStudentId == sid) {
+          result.add(AssignedTaskEntry(project: project, task: task));
+        }
+      }
+    }
+    return result;
+  }
+
+  // ==========================================
   // NOTIFICATION SERVICE & ROUTING CONTROLLER
   // ==========================================
 
@@ -217,9 +240,9 @@ class WorkspaceStore {
   static void markAllReadForCurrentUser() {
     final now = DateTime.now();
     for (var n in notifications) {
-      if (n.recipientStudentId == currentStudentId && !n.isRead) {
+      if (n.recipientStudentId == currentStudentId) {
         n.isRead = true;
-        n.readAt = now;
+        n.readAt ??= now;
       }
     }
   }
@@ -526,4 +549,85 @@ class WorkspaceStore {
       }
     }
   }
+
+  // ==========================================
+  // PROJECT MEMBER MANAGEMENT
+  // ==========================================
+
+  /// Attempts to remove a member from a project:
+  /// - Only that project’s PC can remove members.
+  /// - The project PC cannot be removed.
+  /// - Identifies members and task assignees strictly by Student ID.
+  /// - Checks ALL tasks (TODO, IN_PROGRESS, DONE) in the project.
+  /// - If any tasks are assigned, blocks removal and reports the required message.
+  /// - Rechecks permissions and assignments before modifying data.
+  static RemoveMemberResult removeMemberFromProject({
+    required String projectId,
+    required String memberStudentId,
+    required String actingStudentId,
+  }) {
+    final projectIndex = projects.indexWhere((p) => p.id == projectId);
+    if (projectIndex == -1) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Project not found.',
+      );
+    }
+    final project = projects[projectIndex];
+
+    // 1. Recheck acting user's permissions: must be the project PC
+    final actingMember = project.members.firstWhere(
+      (m) => m.studentId == actingStudentId,
+      orElse: () => TeamMember(studentId: '', name: '', role: ''),
+    );
+    final isActingPC = actingMember.role.toUpperCase() == 'PC' ||
+        (actingStudentId == currentStudentId && project.isCurrentUserPC);
+    if (!isActingPC) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Only that project’s PC can remove members.',
+      );
+    }
+
+    // 2. Member existence check
+    final memberIndex = project.members.indexWhere((m) => m.studentId == memberStudentId);
+    if (memberIndex == -1) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Member not found in this project.',
+      );
+    }
+    final targetMember = project.members[memberIndex];
+
+    // 3. Do not allow removing the project PC
+    if (targetMember.role.toUpperCase() == 'PC') {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'The project PC cannot be removed.',
+      );
+    }
+
+    // 4. Check ALL project tasks, including completed tasks, for assignments to that Student ID
+    final hasAssignedTasks = project.tasks.any((t) => t.assignedStudentId == memberStudentId);
+    if (hasAssignedTasks) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Please reassign this member’s tasks before removing them.',
+      );
+    }
+
+    // 5. All checks passed -> remove only their membership from this project
+    project.members.removeAt(memberIndex);
+    return const RemoveMemberResult(
+      success: true,
+      message: 'Member removed successfully.',
+    );
+  }
+}
+
+class RemoveMemberResult {
+  final bool success;
+  final String message;
+
+  const RemoveMemberResult({required this.success, required this.message});
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/constants/app_colors.dart';
 import '../data/workspace_store.dart';
 import '../screens/dashboard/dashboard_screen.dart';
+import '../screens/tasks/my_tasks_screen.dart';
 import '../screens/notifications/notifications_screen.dart';
 import '../screens/profile/profile_screen.dart';
 
@@ -56,7 +57,13 @@ class _MainNavigationShellState extends State<MainNavigationShell>
         index: _selectedIndex,
         children: [
           DashboardScreen(
-            onOpenNotifications: () => setState(() => _selectedIndex = 1),
+            onOpenNotifications: () => setState(() => _selectedIndex = 2),
+            onRefresh: () {
+              WorkspaceStore.checkOverdueTasksAndNotify();
+              setState(() {});
+            },
+          ),
+          MyTasksScreen(
             onRefresh: () {
               WorkspaceStore.checkOverdueTasksAndNotify();
               setState(() {});
@@ -77,6 +84,12 @@ class _MainNavigationShellState extends State<MainNavigationShell>
             selectedIcon: Icon(Icons.dashboard_rounded),
             label: 'Dashboard',
             tooltip: 'View your projects & tasks',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.assignment_outlined),
+            selectedIcon: Icon(Icons.assignment_rounded),
+            label: 'My Tasks',
+            tooltip: 'Tasks assigned to you',
           ),
           NavigationDestination(
             icon: Badge(

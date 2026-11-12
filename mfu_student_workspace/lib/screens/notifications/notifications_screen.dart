@@ -5,6 +5,7 @@ import '../../models/project_model.dart';
 import '../../models/task_item.dart';
 import '../../data/workspace_store.dart';
 import '../../widgets/empty_state_card.dart';
+import '../projects/project_detail_screen.dart';
 import '../tasks/task_detail_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -22,7 +23,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   void _markAllAsRead() {
     WorkspaceStore.markAllReadForCurrentUser();
-    setState(() {});
+    // Switch to 'ALL' tab so all notifications remain visible after being marked as read
+    setState(() {
+      _activeFilter = 'ALL';
+    });
     widget.onRefresh();
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -45,8 +49,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       widget.onRefresh();
     }
 
-    // 2. If this notification has a linked project and task, navigate to it safely
-    if (n.projectId != null && n.taskId != null) {
+    // 2. If this notification has a linked project, navigate to it safely (task or project level)
+    if (n.projectId != null) {
       // Find project by explicit projectId
       ProjectModel? targetProject;
       for (final p in WorkspaceStore.projects) {
@@ -84,37 +88,49 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return;
       }
 
-      // Find task by explicit taskId (never parse titles or text)
-      TaskItem? targetTask;
-      for (final t in targetProject.tasks) {
-        if (t.id == n.taskId) {
-          targetTask = t;
-          break;
+      if (n.taskId != null) {
+        // Find task by explicit taskId (never parse titles or text)
+        TaskItem? targetTask;
+        for (final t in targetProject.tasks) {
+          if (t.id == n.taskId) {
+            targetTask = t;
+            break;
+          }
         }
-      }
 
-      if (targetTask == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('This task has been deleted or is no longer available.'),
-            backgroundColor: AppColors.primary,
-            behavior: SnackBarBehavior.floating,
+        if (targetTask == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This task has been deleted or is no longer available.'),
+              backgroundColor: AppColors.primary,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+
+        // Open destination TaskDetailScreen
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TaskDetailScreen(
+              project: targetProject!,
+              task: targetTask!,
+            ),
           ),
         );
-        return;
-      }
-
-      // Open destination TaskDetailScreen
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => TaskDetailScreen(
-            project: targetProject!,
-            task: targetTask!,
+      } else {
+        // Open destination ProjectDetailScreen for project-level notifications
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProjectDetailScreen(
+              project: targetProject!,
+            ),
           ),
-        ),
-      );
+        );
+      }
 
       if (mounted) {
         setState(() {});
