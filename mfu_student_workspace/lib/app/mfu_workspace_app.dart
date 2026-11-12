@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'app_theme.dart';
 import '../screens/auth/auth_screen.dart';
 
@@ -11,8 +12,7 @@ class MfuWorkspaceApp extends StatelessWidget {
       title: 'MFU Student Workspace',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const AuthScreen(),
+      home: const AuthGate(),
     );
   }
 }
-

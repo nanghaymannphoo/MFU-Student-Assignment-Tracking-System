@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../data/workspace_store.dart';
 import '../../navigation/main_navigation_shell.dart';
+import '../../services/auth_service.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -12,20 +15,17 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
-  bool isLogin = true;
-  bool obscurePassword = true;
-  bool obscureConfirmPassword = true;
+  final _studentIdCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _confirmPasswordCtrl = TextEditingController();
+  final _authController = AuthController();
 
-  final TextEditingController _studentIdCtrl =
-      TextEditingController(text: '6731501105');
-  final TextEditingController _nameCtrl =
-      TextEditingController(text: 'Nang Hay Man Phoo');
-  final TextEditingController _emailCtrl =
-      TextEditingController(text: '6731501105@lamduan.mfu.ac.th');
-  final TextEditingController _passwordCtrl =
-      TextEditingController(text: '123456');
-  final TextEditingController _confirmPasswordCtrl =
-      TextEditingController(text: '123456');
+  bool _isLogin = true;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -37,42 +37,106 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  void _handleSubmit() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    if (!isLogin) {
-      if (_passwordCtrl.text != _confirmPasswordCtrl.text) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Passwords do not match. Please verify your password.'),
-            backgroundColor: AppColors.danger,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        return;
-      }
-
-      WorkspaceStore.currentUserName = _nameCtrl.text.trim();
-      WorkspaceStore.currentStudentId = _studentIdCtrl.text.trim();
-      WorkspaceStore.currentEmail = _emailCtrl.text.trim();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Account created successfully! You can now log in.'),
-          backgroundColor: AppColors.primary,
+  void _showMessage(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
           behavior: SnackBarBehavior.floating,
         ),
       );
-      setState(() => isLogin = true);
-      return;
-    }
+  }
 
-    // Login -> Navigate to Main Shell (Page 2, 5, 6)
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const MainNavigationShell()),
+  Future<void> _handleSubmit() async {
+    if (_loading || !_formKey.currentState!.validate()) return;
+
+    setState(() => _loading = true);
+    try {
+      if (_isLogin) {
+        final user = await _authController.login(
+          _studentIdCtrl.text.trim(),
+          _passwordCtrl.text,
+        );
+        if (!mounted) return;
+        if (user == null) {
+          _showMessage('Student ID or password is incorrect.', isError: true);
+          return;
+        }
+
+        WorkspaceStore.currentStudentId = user.studentId;
+        WorkspaceStore.currentUserName = user.fullName;
+        WorkspaceStore.currentEmail = user.email;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MainNavigationShell()),
+        );
+      } else {
+        if (_passwordCtrl.text != _confirmPasswordCtrl.text) {
+          _showMessage(
+            'Passwords do not match. Please verify your password.',
+            isError: true,
+          );
+          return;
+        }
+        await _authController.register(
+          studentId: _studentIdCtrl.text.trim(),
+          fullName: _nameCtrl.text.trim(),
+          email: _emailCtrl.text.trim(),
+          password: _passwordCtrl.text,
+        );
+        if (!mounted) return;
+        _showMessage('Account created successfully! You can now log in.');
+        _passwordCtrl.clear();
+        _confirmPasswordCtrl.clear();
+        setState(() => _isLogin = true);
+      }
+    } on ApiException catch (e) {
+      _showMessage(e.message, isError: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Widget _buildPasswordField({
+    required String label,
+    required TextEditingController controller,
+    required bool obscureText,
+    required VoidCallback onToggleVisibility,
+    bool confirmPassword = false,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: const Icon(Icons.lock_outline),
+        suffixIcon: IconButton(
+          tooltip: obscureText ? 'Show password' : 'Hide password',
+          icon: Icon(
+            obscureText
+                ? Icons.visibility_off_outlined
+                : Icons.visibility_outlined,
+          ),
+          onPressed: onToggleVisibility,
+        ),
+      ),
+      validator: (value) {
+        if (value == null || value.trim().isEmpty) {
+          return confirmPassword
+              ? 'Please confirm your password'
+              : 'Please enter your password';
+        }
+        if (!_isLogin && !confirmPassword && value.length < 6) {
+          return 'Password must be at least 6 characters';
+        }
+        if (confirmPassword && value != _passwordCtrl.text) {
+          return 'Passwords do not match';
+        }
+        return null;
+      },
     );
   }
 
@@ -83,277 +147,170 @@ class _AuthScreenState extends State<AuthScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // App Crest / Logo
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: const BoxDecoration(
-                      color: AppColors.lightAccent,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.school_rounded,
-                      size: 46,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'MFU Student Workspace',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Mae Fah Luang University Academic Project Tracker',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Toggle Tab (Login | Sign Up)
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () {
-                              if (!isLogin) {
-                                setState(() => isLogin = true);
-                                _formKey.currentState?.reset();
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isLogin ? AppColors.cardBackground : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10),
-                                boxShadow: isLogin
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.primary.withValues(alpha: 0.08),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                'Log In',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: isLogin ? AppColors.primary : AppColors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () {
-                              if (isLogin) {
-                                setState(() => isLogin = false);
-                                _formKey.currentState?.reset();
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: !isLogin ? AppColors.cardBackground : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10),
-                                boxShadow: !isLogin
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.primary.withValues(alpha: 0.08),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                'Sign Up',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: !isLogin ? AppColors.primary : AppColors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Form Input Card
-                  Card(
-                    elevation: 0,
-                    color: AppColors.cardBackground,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: const BorderSide(color: AppColors.border),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!isLogin) ...[
-                            TextFormField(
-                              controller: _nameCtrl,
-                              textCapitalization: TextCapitalization.words,
-                              style: const TextStyle(color: AppColors.textPrimary),
-                              decoration: const InputDecoration(
-                                labelText: 'Full Name',
-                                hintText: 'e.g. Somchai Suksan',
-                                prefixIcon: Icon(Icons.person_outline),
-                              ),
-                              validator: (val) {
-                                if (val == null || val.trim().length < 2) {
-                                  return 'Please enter your full name';
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 14),
-                          ],
-
-                          TextFormField(
-                            controller: _studentIdCtrl,
-                            keyboardType: TextInputType.number,
-                            style: const TextStyle(color: AppColors.textPrimary),
-                            decoration: const InputDecoration(
-                              labelText: 'Student ID',
-                              hintText: '10-digit ID (e.g. 6731501105)',
-                              prefixIcon: Icon(Icons.badge_outlined),
-                            ),
-                            validator: (val) {
-                              if (val == null || val.trim().isEmpty) {
-                                return 'Please enter your student ID';
-                              }
-                              if (val.trim().length != 10 || int.tryParse(val.trim()) == null) {
-                                return 'Student ID must be exactly 10 digits';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 14),
-
-                          if (!isLogin) ...[
-                            TextFormField(
-                              controller: _emailCtrl,
-                              keyboardType: TextInputType.emailAddress,
-                              style: const TextStyle(color: AppColors.textPrimary),
-                              decoration: const InputDecoration(
-                                labelText: 'Lamduan Mail (@lamduan.mfu.ac.th)',
-                                hintText: '6731501105@lamduan.mfu.ac.th',
-                                prefixIcon: Icon(Icons.alternate_email),
-                              ),
-                              validator: (val) {
-                                if (val == null || val.trim().isEmpty) {
-                                  return 'Please enter your Lamduan email';
-                                }
-                                if (!val.trim().toLowerCase().endsWith('@lamduan.mfu.ac.th')) {
-                                  return 'Must end with @lamduan.mfu.ac.th';
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 14),
-                          ],
-
-                          TextFormField(
-                            controller: _passwordCtrl,
-                            obscureText: obscurePassword,
-                            style: const TextStyle(color: AppColors.textPrimary),
-                            decoration: InputDecoration(
-                              labelText: 'Password',
-                              hintText: isLogin ? 'Enter password' : 'At least 6 characters',
-                              prefixIcon: const Icon(Icons.lock_outline),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                                  color: AppColors.textSecondary,
-                                ),
-                                tooltip: obscurePassword ? 'Show password' : 'Hide password',
-                                onPressed: () => setState(() => obscurePassword = !obscurePassword),
-                              ),
-                            ),
-                            validator: (val) {
-                              if (val == null || val.trim().isEmpty) {
-                                return 'Please enter your password';
-                              }
-                              if (!isLogin && val.trim().length < 6) {
-                                return 'Password must be at least 6 characters';
-                              }
-                              return null;
-                            },
-                          ),
-
-                          if (!isLogin) ...[
-                            const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _confirmPasswordCtrl,
-                              obscureText: obscureConfirmPassword,
-                              style: const TextStyle(color: AppColors.textPrimary),
-                              decoration: InputDecoration(
-                                labelText: 'Confirm Password',
-                                hintText: 'Re-enter password',
-                                prefixIcon: const Icon(Icons.lock_outline),
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                                    color: AppColors.textSecondary,
-                                  ),
-                                  tooltip: obscureConfirmPassword ? 'Show password' : 'Hide password',
-                                  onPressed: () => setState(() => obscureConfirmPassword = !obscureConfirmPassword),
-                                ),
-                              ),
-                              validator: (val) {
-                                if (val == null || val.trim().isEmpty) {
-                                  return 'Please confirm your password';
-                                }
-                                if (val != _passwordCtrl.text) {
-                                  return 'Passwords do not match';
-                                }
-                                return null;
-                              },
-                            ),
-                          ],
-                          const SizedBox(height: 20),
-
-                          SizedBox(
-                            width: double.infinity,
-                            height: 48,
-                            child: FilledButton(
-                              onPressed: _handleSubmit,
-                              child: Text(isLogin ? 'Log In to Workspace' : 'Create Account'),
-                            ),
-                          ),
-                        ],
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    const CircleAvatar(
+                      radius: 40,
+                      backgroundColor: AppColors.lightAccent,
+                      child: Icon(
+                        Icons.school_rounded,
+                        size: 44,
+                        color: AppColors.primary,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    const Text(
+                      'MFU Student Workspace',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Mae Fah Luang University Academic Project Tracker',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: true, label: Text('Log In')),
+                        ButtonSegment(value: false, label: Text('Sign Up')),
+                      ],
+                      selected: {_isLogin},
+                      onSelectionChanged: _loading
+                          ? null
+                          : (selection) =>
+                                setState(() => _isLogin = selection.first),
+                    ),
+                    const SizedBox(height: 20),
+                    Card(
+                      elevation: 0,
+                      color: AppColors.cardBackground,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: const BorderSide(color: AppColors.border),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: [
+                            if (!_isLogin) ...[
+                              TextFormField(
+                                controller: _nameCtrl,
+                                textCapitalization: TextCapitalization.words,
+                                decoration: const InputDecoration(
+                                  labelText: 'Full Name',
+                                  prefixIcon: Icon(Icons.person_outline),
+                                ),
+                                validator: (value) =>
+                                    value == null || value.trim().length < 2
+                                    ? 'Please enter your full name'
+                                    : null,
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            TextFormField(
+                              controller: _studentIdCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Student ID',
+                                prefixIcon: Icon(Icons.badge_outlined),
+                              ),
+                              validator: (value) {
+                                final id = value?.trim() ?? '';
+                                if (id.isEmpty)
+                                  return 'Please enter your student ID';
+                                if (id.length != 10 ||
+                                    int.tryParse(id) == null) {
+                                  return 'Student ID must be exactly 10 digits';
+                                }
+                                return null;
+                              },
+                            ),
+                            if (!_isLogin) ...[
+                              const SizedBox(height: 14),
+                              TextFormField(
+                                controller: _emailCtrl,
+                                keyboardType: TextInputType.emailAddress,
+                                decoration: const InputDecoration(
+                                  labelText:
+                                      'Lamduan Mail (@lamduan.mfu.ac.th)',
+                                  prefixIcon: Icon(Icons.alternate_email),
+                                ),
+                                validator: (value) {
+                                  final email =
+                                      value?.trim().toLowerCase() ?? '';
+                                  if (email.isEmpty)
+                                    return 'Please enter your Lamduan email';
+                                  if (!email.endsWith('@lamduan.mfu.ac.th')) {
+                                    return 'Must end with @lamduan.mfu.ac.th';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                            _buildPasswordField(
+                              label: 'Password',
+                              controller: _passwordCtrl,
+                              obscureText: _obscurePassword,
+                              onToggleVisibility: () => setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              ),
+                            ),
+                            if (!_isLogin) ...[
+                              const SizedBox(height: 14),
+                              _buildPasswordField(
+                                label: 'Confirm Password',
+                                controller: _confirmPasswordCtrl,
+                                obscureText: _obscureConfirmPassword,
+                                onToggleVisibility: () => setState(
+                                  () => _obscureConfirmPassword =
+                                      !_obscureConfirmPassword,
+                                ),
+                                confirmPassword: true,
+                              ),
+                            ],
+                            const SizedBox(height: 20),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: FilledButton(
+                                onPressed: _loading ? null : _handleSubmit,
+                                child: _loading
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Text(
+                                        _isLogin
+                                            ? 'Log In to Workspace'
+                                            : 'Create Account',
+                                      ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -363,7 +320,115 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// ==========================================
-// MAIN SHELL (Bottom Nav: Dashboard | Noti | Profile)
-// ==========================================
+/// หน้าแรกของแอป: เช็ค token ที่บันทึกไว้ก่อนตัดสินใจว่าจะไปหน้าไหน
+///   - ไม่มี token / token หมดอายุ (401)  -> AuthScreen
+///   - token ใช้ได้                        -> MainNavigationShell (ไม่ต้อง login ใหม่)
+///   - เน็ต/เซิร์ฟเวอร์มีปัญหา              -> หน้า Retry (ไม่เตะผู้ใช้ออกจากระบบโดยไม่จำเป็น)
+///
+/// วิธีใช้: ใน main.dart ให้ตั้ง  home: const AuthGate()
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
 
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+enum _GateStatus { loading, authenticated, guest, error }
+
+class _AuthGateState extends State<AuthGate> {
+  final _authService = AuthService();
+  final _userController = UserController();
+
+  _GateStatus _status = _GateStatus.loading;
+  String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    setState(() => _status = _GateStatus.loading);
+
+    final token = await _authService.loadToken();
+    if (token == null || token.isEmpty) {
+      if (mounted) setState(() => _status = _GateStatus.guest);
+      return;
+    }
+
+    try {
+      final me = await _userController.getMe();
+      WorkspaceStore.currentStudentId = me.studentId;
+      WorkspaceStore.currentUserName = me.fullName;
+      WorkspaceStore.currentEmail = me.email;
+      if (mounted) setState(() => _status = _GateStatus.authenticated);
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 || e.statusCode == 404) {
+        // token หมดอายุ หรือบัญชีไม่มีแล้ว -> เคลียร์แล้วให้ login ใหม่
+        await _authService.removeToken();
+        if (mounted) setState(() => _status = _GateStatus.guest);
+      } else if (mounted) {
+        setState(() {
+          _errorMessage = e.message;
+          _status = _GateStatus.error;
+        });
+      }
+    }
+  }
+
+  Future<void> _discardTokenAndLogin() async {
+    await _authService.removeToken();
+    if (mounted) setState(() => _status = _GateStatus.guest);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    switch (_status) {
+      case _GateStatus.authenticated:
+        return const MainNavigationShell();
+      case _GateStatus.guest:
+        return const AuthScreen();
+      case _GateStatus.error:
+        return Scaffold(
+          backgroundColor: AppColors.scaffoldBackground,
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.cloud_off_rounded,
+                    size: 48,
+                    color: AppColors.textSecondary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _errorMessage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _restoreSession,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Try again'),
+                  ),
+                  TextButton(
+                    onPressed: _discardTokenAndLogin,
+                    child: const Text('Log in again'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      case _GateStatus.loading:
+        return const Scaffold(
+          backgroundColor: AppColors.scaffoldBackground,
+          body: Center(child: CircularProgressIndicator()),
+        );
+    }
+  }
+}
