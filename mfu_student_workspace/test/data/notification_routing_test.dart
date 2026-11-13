@@ -23,8 +23,8 @@ void main() {
         myRole: 'PC',
         members: [
           TeamMember(studentId: '6731501105', name: 'Phoo', role: 'PC'),
-          TeamMember(studentId: '6731501101', name: 'Menisa', role: 'Member'),
-          TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'Member'),
+          TeamMember(studentId: '6731501101', name: 'Menisa', role: 'MEMBER'),
+          TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'MEMBER'),
         ],
         tasks: [],
       );
@@ -234,6 +234,62 @@ void main() {
         (n) => n.recipientStudentId == '6731501101',
       );
       expect(menisaNotif.isRead, false);
+
+      // Verify that no records were deleted: all notifications still exist
+      expect(WorkspaceStore.notifications.length, 2);
+      expect(WorkspaceStore.getNotificationsForCurrentUser().length, 1);
+    });
+
+    test('Mark all as read keeps all notification records and updates only read state', () {
+      // Create 3 notifications for current user (2 unread, 1 already read)
+      WorkspaceStore.dispatchNotification(
+        eventId: 'n_preserve_1',
+        type: 'TASK_ASSIGNED',
+        title: 'Task 1',
+        message: 'Details 1',
+        recipientStudentId: '6731501105',
+        actorStudentId: '6731501102',
+      );
+      WorkspaceStore.dispatchNotification(
+        eventId: 'n_preserve_2',
+        type: 'SUBMISSION',
+        title: 'Task 2',
+        message: 'Details 2',
+        recipientStudentId: '6731501105',
+        actorStudentId: '6731501102',
+      );
+      WorkspaceStore.dispatchNotification(
+        eventId: 'n_preserve_3',
+        type: 'COMMENT',
+        title: 'Task 3',
+        message: 'Details 3',
+        recipientStudentId: '6731501105',
+        actorStudentId: '6731501102',
+      );
+
+      // Mark the 3rd as already read initially
+      WorkspaceStore.notifications.firstWhere((n) => n.eventId == 'n_preserve_3').isRead = true;
+
+      final countBefore = WorkspaceStore.getNotificationsForCurrentUser().length;
+      expect(countBefore, 3);
+      expect(WorkspaceStore.getUnreadCountForCurrentUser(), 2);
+
+      // Execute markAllReadForCurrentUser
+      WorkspaceStore.markAllReadForCurrentUser();
+
+      // All 3 records MUST still exist in both store and user query
+      final userListAfter = WorkspaceStore.getNotificationsForCurrentUser();
+      expect(userListAfter.length, 3);
+      expect(WorkspaceStore.notifications.length, 3);
+
+      // All 3 records are now isRead == true
+      for (final n in userListAfter) {
+        expect(n.isRead, true);
+        expect(n.readAt, isNotNull);
+      }
+
+      // Unread count drops to 0
+      expect(WorkspaceStore.getUnreadCountForCurrentUser(), 0);
     });
   });
 }

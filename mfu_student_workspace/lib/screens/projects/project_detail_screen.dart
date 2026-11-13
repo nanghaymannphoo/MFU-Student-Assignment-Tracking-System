@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../models/api_models.dart';
 import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/status_helpers.dart';
@@ -31,6 +30,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   // Set of member student IDs whose task lists are expanded in the Members tab
   final Set<String> _expandedMemberIds = {};
+
+  // Member View Secondary Tab: 0 = My Tasks (default), 1 = Team Members
+  int _selectedMemberTab = 0;
 
   final _projectController = ProjectController();
   final _memberController = MemberController();
@@ -171,7 +173,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 ),
                 ValueListenableBuilder<String?>(
                   valueListenable: serverError,
-                  builder: (_, err, __) => err == null
+                  builder: (_, err, _) => err == null
                       ? const SizedBox.shrink()
                       : Padding(
                           padding: const EdgeInsets.only(top: 12),
@@ -198,7 +200,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     Expanded(
                       child: ValueListenableBuilder<bool>(
                         valueListenable: adding,
-                        builder: (_, isAdding, __) => FilledButton.icon(
+                        builder: (_, isAdding, _) => FilledButton.icon(
                           style: FilledButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             minimumSize: const Size(0, 46),
@@ -229,7 +231,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                         TeamMember(
                                           studentId: id,
                                           name: name,
-                                          role: 'Member', // Automatically set to Member
+                                          role: 'MEMBER', // Automatically set to MEMBER
                                         ),
                                       );
                                     });
@@ -262,6 +264,143 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // ==========================================
+  // ACTION: REMOVE TEAM MEMBER (PC ONLY)
+  // ==========================================
+  void _handleRemoveMember(TeamMember member) {
+    // 1. Permission check: Only project PC can remove members
+    if (!widget.project.isCurrentUserPC) return;
+
+    // 2. Cannot remove the project PC
+    final isMemberPC = member.role.toUpperCase() == 'PC';
+    if (isMemberPC) return;
+
+    // 3. Before removal, check ALL project tasks, including completed tasks, for assignments to that Student ID
+    final assignedTasks = widget.project.tasks
+        .where((t) => t.assignedStudentId == member.studentId)
+        .toList();
+
+    // 4. If any tasks are assigned, block removal and show required warning
+    if (assignedTasks.isNotEmpty) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.cardBackground,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            'Cannot Remove Member',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          content: const Text(
+            'Please reassign this member’s tasks before removing them.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                minimumSize: const Size(80, 36),
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please reassign this member’s tasks before removing them.'),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // 5. If no tasks are assigned, show a confirmation dialog naming the member
+    final displayName = member.name == member.studentId
+        ? 'Student ${member.studentId}'
+        : member.name;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Remove Team Member',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to remove $displayName (ID: ${member.studentId}) from this project?',
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.textSecondary),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.danger,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(80, 36),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _executeRemoveMember(member);
+            },
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _executeRemoveMember(TeamMember member) {
+    // Recheck permissions and assignments in the store handler before changing data
+    final result = WorkspaceStore.removeMemberFromProject(
+      projectId: widget.project.id,
+      memberStudentId: member.studentId,
+      actingStudentId: WorkspaceStore.currentStudentId,
+    );
+
+    if (!result.success) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _expandedMemberIds.remove(member.studentId);
+    });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Removed ${member.name} from project.'),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -357,8 +496,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                   value: m.studentId,
                                   child: Text(
                                     m.name == m.studentId
-                                        ? 'ID: ${m.studentId} (${m.role})'
-                                        : '${m.name} (${m.role})',
+                                        ? 'ID: ${m.studentId} (${formatRole(m.role)})'
+                                        : '${m.name} (${formatRole(m.role)})',
                                   ),
                                 ))
                             .toList(),
@@ -395,7 +534,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                               orElse: () => TeamMember(
                                 studentId: selectedStudentId,
                                 name: selectedStudentId,
-                                role: 'Member',
+                                role: 'MEMBER',
                               ),
                             );
 
@@ -666,6 +805,52 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final isPC = widget.project.isCurrentUserPC;
+
+    // ==========================================
+    // MEMBER VIEW (ONLY TWO TABS: MY TASKS & TEAM MEMBERS)
+    // ==========================================
+    if (!isPC) {
+      final myProjectTasks = widget.project.tasks
+          .where((t) => t.assignedStudentId == WorkspaceStore.currentStudentId)
+          .toList();
+
+      return Scaffold(
+        backgroundColor: AppColors.scaffoldBackground,
+        appBar: AppBar(
+          title: Text(widget.project.title),
+        ),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 960),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+              children: [
+                // 1. Compact Member Project Header (No progress bars, percentages, or summary cards)
+                _buildMemberProjectHeader(),
+                const SizedBox(height: 14),
+
+                // 2. Exactly Two Tabs: "My Tasks" and "Team Members" (Default: My Tasks)
+                _buildMemberTabSelector(
+                  myTasksCount: myProjectTasks.length,
+                  membersCount: widget.project.members.length,
+                ),
+                const SizedBox(height: 14),
+
+                // 3. Tab Contents
+                if (_selectedMemberTab == 0)
+                  _buildMemberMyTasksSection(myProjectTasks)
+                else
+                  _buildMemberTeamMembersSection(),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ==========================================
+    // PC VIEW (100% UNCHANGED)
+    // ==========================================
     final totalTasks = widget.project.tasks.length;
     final doneCount = widget.project.tasks.where((t) => t.status == 'DONE').length;
     final inProgressCount = widget.project.tasks.where((t) => t.status == 'IN_PROGRESS').length;
@@ -724,6 +909,408 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ==========================================
+  // MEMBER VIEW: COMPACT HEADER (READ-ONLY, NO PROGRESS BARS)
+  // ==========================================
+  Widget _buildMemberProjectHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                widget.project.courseCode,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.lightAccent,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+                ),
+                child: const Text(
+                  'Member',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            widget.project.title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          if (widget.project.description.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              widget.project.description,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.3),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_rounded, size: 12, color: AppColors.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                'Deadline: ${widget.project.deadline}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // MEMBER VIEW: TWO TABS SELECTOR (MY TASKS & TEAM MEMBERS)
+  // ==========================================
+  Widget _buildMemberTabSelector({required int myTasksCount, required int membersCount}) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.border,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(9),
+              onTap: () => setState(() => _selectedMemberTab = 0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: BoxDecoration(
+                  color: _selectedMemberTab == 0 ? AppColors.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Center(
+                  child: Text(
+                    'My Tasks ($myTasksCount)',
+                    style: TextStyle(
+                      color: _selectedMemberTab == 0 ? Colors.white : AppColors.textSecondary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(9),
+              onTap: () => setState(() => _selectedMemberTab = 1),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: BoxDecoration(
+                  color: _selectedMemberTab == 1 ? AppColors.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Center(
+                  child: Text(
+                    'Team Members ($membersCount)',
+                    style: TextStyle(
+                      color: _selectedMemberTab == 1 ? Colors.white : AppColors.textSecondary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // MEMBER VIEW: MY TASKS SECTION
+  // ==========================================
+  Widget _buildMemberMyTasksSection(List<TaskItem> myProjectTasks) {
+    if (myProjectTasks.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 24),
+        child: EmptyStateCard(
+          icon: Icons.assignment_outlined,
+          title: 'No Tasks Assigned',
+          message: 'You currently have no tasks assigned to your Student ID in this project.',
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: myProjectTasks.map((task) {
+        final isOverdue = isTaskOverdue(task);
+        final relative = getDeadlineRelativeLabel(task.dueDate, status: task.status);
+
+        Color statusFg;
+        Color statusBg;
+        String statusLabel;
+        switch (task.status.toUpperCase()) {
+          case 'DONE':
+            statusFg = AppColors.primary;
+            statusBg = AppColors.lightAccent;
+            statusLabel = 'Completed';
+            break;
+          case 'IN_PROGRESS':
+            statusFg = AppColors.gold;
+            statusBg = AppColors.lightGold;
+            statusLabel = 'In Progress';
+            break;
+          case 'TODO':
+          default:
+            statusFg = AppColors.textSecondary;
+            statusBg = const Color(0xFFF1F5F9);
+            statusLabel = 'To Do';
+            break;
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            color: isOverdue ? AppColors.dangerLight : AppColors.cardBackground,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: isOverdue
+                    ? AppColors.danger.withValues(alpha: 0.35)
+                    : AppColors.border,
+                width: isOverdue ? 1.2 : 1.0,
+              ),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TaskDetailScreen(
+                      project: widget.project,
+                      task: task,
+                    ),
+                  ),
+                );
+                if (mounted) setState(() {});
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            task.title,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: statusFg.withValues(alpha: 0.25)),
+                          ),
+                          child: Text(
+                            statusLabel,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: statusFg,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          task.dueDate.trim().isEmpty
+                              ? Icons.event_busy_rounded
+                              : Icons.calendar_today_rounded,
+                          size: 12,
+                          color: isOverdue ? AppColors.danger : AppColors.textSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          task.dueDate.trim().isEmpty ? 'No deadline' : 'Due ${task.dueDate.trim()}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isOverdue ? FontWeight.bold : FontWeight.w500,
+                            color: isOverdue ? AppColors.danger : AppColors.textPrimary,
+                          ),
+                        ),
+                        if (task.dueDate.trim().isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '• $relative',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: isOverdue ? FontWeight.bold : FontWeight.w500,
+                              color: isOverdue ? AppColors.danger : AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                        if (isOverdue) ...[
+                          const Spacer(),
+                          buildOverdueBadge(compact: true),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ==========================================
+  // MEMBER VIEW: READ-ONLY TEAM MEMBERS SECTION
+  // ==========================================
+  Widget _buildMemberTeamMembersSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: widget.project.members.length,
+        separatorBuilder: (_, _) => const Divider(height: 1, color: AppColors.border),
+        itemBuilder: (ctx, index) {
+          final member = widget.project.members[index];
+          final isMemberPC = member.role.toUpperCase() == 'PC' || member.role.toUpperCase() == 'COORDINATOR';
+          final isCurrentUser = member.studentId == WorkspaceStore.currentStudentId;
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: isMemberPC ? AppColors.lightGold : const Color(0xFFF1F5F9),
+                  child: Text(
+                    member.name.isNotEmpty ? member.name[0].toUpperCase() : '?',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isMemberPC ? AppColors.gold : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              member.name,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isCurrentUser) ...[
+                            const SizedBox(width: 6),
+                            const Text(
+                              '(You)',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Student ID: ${member.studentId}',
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: isMemberPC ? AppColors.lightGold : const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isMemberPC
+                          ? AppColors.gold.withValues(alpha: 0.3)
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    isMemberPC ? 'Coordinator (PC)' : 'Member',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: isMemberPC ? AppColors.gold : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -1024,7 +1611,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     ),
                   ),
                   Text(
-                    '1 PC, ${widget.project.members.where((m) => m.role == 'Member').length} Members',
+                    '1 PC, ${widget.project.members.where((m) => m.role.toUpperCase() != 'PC').length} Members',
                     style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ],
@@ -1037,7 +1624,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 separatorBuilder: (_, _) => const Divider(height: 1, color: AppColors.border),
                 itemBuilder: (ctx, i) {
                   final member = widget.project.members[i];
-                  final isMemberPC = member.role == 'PC';
+                  final isMemberPC = member.role.toUpperCase() == 'PC';
                   final displayName = member.name == member.studentId
                       ? 'Student ${member.studentId}'
                       : member.name;
@@ -1095,6 +1682,39 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             ),
                           ),
                         ),
+                        if (!isMemberPC) ...[
+                          const SizedBox(width: 8),
+                          InkWell(
+                            key: Key('remove_member_${member.studentId}'),
+                            onTap: () => _handleRemoveMember(member),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppColors.dangerLight,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: AppColors.danger.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.person_remove_outlined, size: 13, color: AppColors.danger),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Remove',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.danger,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   );
@@ -1498,7 +2118,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             return;
                           }
                           setState(() {
-                            task.status = val;
+                            task.setStatus(val);
                           });
                           WorkspaceStore.onStatusChanged(
                             project: widget.project,

@@ -335,7 +335,7 @@ class MemberController extends BaseController {
 
 // ================= task =================
 class TaskController extends BaseController {
-  // GET /api/projects/:projectId/tasks
+  // list -> GET /api/projects/:projectId/tasks (สมาชิกของโปรเจคเท่านั้น)
   Future<List<TaskData>> getTasks(String projectId) {
     return guard(() async {
       final response = await http.get(
@@ -343,11 +343,11 @@ class TaskController extends BaseController {
         headers: await authHeaders(),
       );
       List<dynamic> data = decode(response);
-      return data.map((j) => TaskData.fromJSON(j)).toList();
+      return data.map((json) => TaskData.fromJSON(json)).toList();
     });
   }
- 
-  // GET /api/tasks/:id
+
+  // get -> GET /api/tasks/:id (มี myRole ของฉันในโปรเจคนี้มาด้วย)
   Future<TaskData> getTask(String id) {
     return guard(() async {
       final response = await http.get(
@@ -357,13 +357,14 @@ class TaskController extends BaseController {
       return TaskData.fromJSON(decode(response));
     });
   }
- 
-  // POST /api/projects/:projectId/tasks (PC เท่านั้น) คืน id ของ task ใหม่
+
+  // create -> POST /api/projects/:projectId/tasks (PC เท่านั้น) คืน id ของงานใหม่
+  // assignedTo ต้องเป็นสมาชิกของโปรเจคนี้ (ไม่ใส่ = ยังไม่มอบหมาย)
   Future<String> createTask(
     String projectId, {
     required String title,
     String? description,
-    String? assignedTo, // student_id
+    String? assignedTo,
     String? dueDate, // YYYY-MM-DD
   }) {
     return guard(() async {
@@ -381,9 +382,9 @@ class TaskController extends BaseController {
       return data['id'] as String;
     });
   }
- 
-  // PUT /api/tasks/:id (PC เท่านั้น) ส่งเฉพาะช่องที่แก้
-  // ใช้ตอน Edit Task และตอน Extend Deadline (ส่งแค่ dueDate)
+
+  // update -> PUT /api/tasks/:id (PC เท่านั้น) ส่งเฉพาะช่องที่แก้
+  // dueDate: '' = ลบวันกำหนดส่ง | เปลี่ยนวัน = แจ้งผู้รับงานอัตโนมัติ (Extend Deadline)
   Future<void> updateTask(
     String id, {
     String? title,
@@ -391,20 +392,22 @@ class TaskController extends BaseController {
     String? dueDate,
   }) {
     return guard(() async {
+      final body = <String, dynamic>{
+        if (title != null) 'title': title,
+        if (description != null) 'description': description,
+        if (dueDate != null) 'due_date': dueDate,
+      };
       final response = await http.put(
         Uri.parse('$baseURL/tasks/$id'),
         headers: await authHeaders(json: true),
-        body: jsonEncode({
-          if (title != null) 'title': title,
-          if (description != null) 'description': description,
-          if (dueDate != null) 'due_date': dueDate,
-        }),
+        body: jsonEncode(body),
       );
       decode(response);
     });
   }
- 
-  // PATCH /api/tasks/:id/status  (PC หรือผู้ถูกมอบหมาย)
+
+  // status -> PATCH /api/tasks/:id/status (PC หรือผู้รับงาน)
+  // status: 'TODO' | 'IN_PROGRESS' | 'DONE'
   Future<void> updateStatus(String id, String status) {
     return guard(() async {
       final response = await http.patch(
@@ -415,8 +418,8 @@ class TaskController extends BaseController {
       decode(response);
     });
   }
- 
-  // PATCH /api/tasks/:id/assign (PC เท่านั้น) studentId = null คือยกเลิกการมอบหมาย
+
+  // assign -> PATCH /api/tasks/:id/assign (PC เท่านั้น) studentId = null ยกเลิกการมอบหมาย
   Future<void> assignTask(String id, String? studentId) {
     return guard(() async {
       final response = await http.patch(
@@ -427,20 +430,20 @@ class TaskController extends BaseController {
       decode(response);
     });
   }
- 
-  // POST /api/tasks/:id/submission (ผู้ถูกมอบหมาย) ส่งลิงก์งาน
-  Future<void> submitWork(String id, String url) {
+
+  // submit -> POST /api/tasks/:id/submission (ผู้รับงานหรือ PC) เก็บลิงก์ของงานที่ส่ง
+  Future<void> submitWork(String id, String submissionUrl) {
     return guard(() async {
       final response = await http.post(
         Uri.parse('$baseURL/tasks/$id/submission'),
         headers: await authHeaders(json: true),
-        body: jsonEncode({'submission_url': url}),
+        body: jsonEncode({'submission_url': submissionUrl}),
       );
       decode(response);
     });
   }
- 
-  // DELETE /api/tasks/:id (PC เท่านั้น)
+
+  // delete -> DELETE /api/tasks/:id (PC เท่านั้น)
   Future<void> deleteTask(String id) {
     return guard(() async {
       final response = await http.delete(
@@ -451,10 +454,10 @@ class TaskController extends BaseController {
     });
   }
 }
- 
+
 // ================= comment =================
 class CommentController extends BaseController {
-  // GET /api/tasks/:taskId/comments
+  // list -> GET /api/tasks/:taskId/comments (เก่า -> ใหม่)
   Future<List<CommentData>> getComments(String taskId) {
     return guard(() async {
       final response = await http.get(
@@ -462,11 +465,11 @@ class CommentController extends BaseController {
         headers: await authHeaders(),
       );
       List<dynamic> data = decode(response);
-      return data.map((j) => CommentData.fromJSON(j)).toList();
+      return data.map((json) => CommentData.fromJSON(json)).toList();
     });
   }
- 
-  // POST /api/tasks/:taskId/comments คืนคอมเมนต์ที่เพิ่งสร้าง
+
+  // add -> POST /api/tasks/:taskId/comments คืนคอมเมนต์ที่เพิ่ง (มี id และเวลาจริงจาก server)
   Future<CommentData> addComment(String taskId, String text) {
     return guard(() async {
       final response = await http.post(
@@ -477,22 +480,23 @@ class CommentController extends BaseController {
       return CommentData.fromJSON(decode(response));
     });
   }
- 
-  // DELETE /api/comments/:id (เจ้าของเท่านั้น) UI ปัจจุบันยังไม่มีปุ่มลบ
-  Future<void> deleteComment(int id) {
+
+  // delete -> DELETE /api/comments/:id (ลบได้เฉพาะของตัวเอง)
+  // 404 = ไม่พบ หรือไม่ใช่ของฉัน (ข้อความอยู่ใน ApiException.message)
+  Future<void> deleteComment(int commentId) {
     return guard(() async {
       final response = await http.delete(
-        Uri.parse('$baseURL/comments/$id'),
+        Uri.parse('$baseURL/comments/$commentId'),
         headers: await authHeaders(),
       );
       decode(response);
     });
   }
 }
- 
+
 // ================= notification =================
 class NotificationController extends BaseController {
-  // GET /api/notifications
+  // list -> GET /api/notifications (ของฉัน ใหม่ -> เก่า)
   Future<List<NotificationData>> getNotifications() {
     return guard(() async {
       final response = await http.get(
@@ -500,11 +504,11 @@ class NotificationController extends BaseController {
         headers: await authHeaders(),
       );
       List<dynamic> data = decode(response);
-      return data.map((j) => NotificationData.fromJSON(j)).toList();
+      return data.map((json) => NotificationData.fromJSON(json)).toList();
     });
   }
- 
-  // PATCH /api/notifications/:id/read
+
+  // mark read -> PATCH /api/notifications/:id/read (เฉพาะของฉัน)
   Future<void> markRead(String id) {
     return guard(() async {
       final response = await http.patch(
@@ -514,8 +518,8 @@ class NotificationController extends BaseController {
       decode(response);
     });
   }
- 
-  // PATCH /api/notifications/read-all  (ปุ่ม "Mark all as read")
+
+  // mark all read -> PATCH /api/notifications/read-all
   Future<void> markAllRead() {
     return guard(() async {
       final response = await http.patch(
@@ -525,8 +529,8 @@ class NotificationController extends BaseController {
       decode(response);
     });
   }
- 
-  // DELETE /api/notifications/:id (เจ้าของเท่านั้น) UI ปัจจุบันยังไม่มีปุ่มลบ
+
+  // delete -> DELETE /api/notifications/:id (ลบได้เฉพาะของตัวเอง)
   Future<void> deleteNotification(String id) {
     return guard(() async {
       final response = await http.delete(

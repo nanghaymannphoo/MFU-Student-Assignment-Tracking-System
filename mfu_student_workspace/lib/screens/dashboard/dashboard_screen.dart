@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../models/api_models.dart';
 import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_picker_utils.dart';
@@ -136,7 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 // error จาก server (แสดงในชีต เพื่อให้แก้แล้วกดซ้ำได้)
                 ValueListenableBuilder<String?>(
                   valueListenable: serverError,
-                  builder: (_, err, __) => err == null
+                  builder: (_, err, _) => err == null
                       ? const SizedBox.shrink()
                       : Padding(
                           padding: const EdgeInsets.only(bottom: 12),
@@ -151,7 +150,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   height: 46,
                   child: ValueListenableBuilder<bool>(
                     valueListenable: saving,
-                    builder: (_, isSaving, __) => FilledButton.icon(
+                    builder: (_, isSaving, _) => FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
                       onPressed: isSaving
                           ? null
@@ -519,23 +518,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return taskA.dueDate.compareTo(taskB.dueDate);
     });
 
+    final unreadNotificationCount = WorkspaceStore.getUnreadCountForCurrentUser();
+
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        automaticallyImplyLeading: false,
+        titleSpacing: 16,
+        title: Row(
           children: [
-            Text(
-              'Hello, ${WorkspaceStore.currentUserName.split(' ').first}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-                color: AppColors.textPrimary,
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: AppColors.lightAccent,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.15),
+                  width: 1,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.school_rounded,
+                size: 20,
+                color: AppColors.primary,
               ),
             ),
-            Text(
-              'Student ID: ${WorkspaceStore.currentStudentId}',
-              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'MFU Student Workspace',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                softWrap: true,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.2,
+                  height: 1.2,
+                ),
+              ),
             ),
           ],
         ),
@@ -544,8 +568,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             tooltip: 'Open Notifications',
             onPressed: widget.onOpenNotifications,
             icon: Badge(
-              isLabelVisible: WorkspaceStore.getUnreadCountForCurrentUser() > 0,
-              label: Text('${WorkspaceStore.getUnreadCountForCurrentUser()}'),
+              isLabelVisible: unreadNotificationCount > 0,
+              label: Text('$unreadNotificationCount'),
               backgroundColor: AppColors.primary,
               child: const Icon(Icons.notifications_none_rounded),
             ),
@@ -623,13 +647,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Overall Workload',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Team Projects Workload',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'All team members across your projects',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
               ),
               Text(
                 '$overallPercent% Completed ($doneCount/$totalTasks)',

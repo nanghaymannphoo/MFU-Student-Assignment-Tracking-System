@@ -7,7 +7,7 @@ class ProjectModel {
   final String courseCode;
   final String description;
   final String deadline;
-  final String myRole; // 'PC' or 'Member'
+  final String myRole; // 'PC' or 'MEMBER'
   final List<TeamMember> members;
   final List<TaskItem> tasks;
 
