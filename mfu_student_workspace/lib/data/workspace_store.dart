@@ -5,137 +5,163 @@ import '../models/task_item.dart';
 import '../models/project_model.dart';
 import '../models/app_notification.dart';
 import '../models/assigned_task_entry.dart';
+import '../models/api_models.dart';
+import '../controller/api_controller.dart';
 
 // ==========================================
 // MOCK CONTROLLER / STATE (MVC - Controller)
 // ==========================================
 
 class WorkspaceStore {
-  static String currentUserName = 'Nang Hay Man Phoo';
-  static String currentStudentId = '6731501105';
-  static String currentEmail = '6731501105@lamduan.mfu.ac.th';
+  // ค่าเหล่านี้ถูกเติมจาก API ตอน login / AuthGate (GET /api/users/me)
+  static String currentUserName = '';
+  static String currentStudentId = '';
+  static String currentEmail = '';
 
-  static List<ProjectModel> projects = [
-    ProjectModel(
-      id: 'p1',
-      title: 'Student Assignment Tracker',
-      courseCode: '1305204 Mobile App Dev',
-      description: 'Flutter + Node.js + MySQL group workspace app with MVC.',
-      deadline: '2026-11-20',
-      myRole: 'PC', // Phoo is PC in this project!
-      members: [
-        TeamMember(studentId: '6731501105', name: 'Phoo', role: 'PC'),
-        TeamMember(studentId: '6731501101', name: 'Menisa', role: 'MEMBER'),
-        TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'MEMBER'),
-        TeamMember(studentId: '6731501108', name: 'Glade', role: 'MEMBER'),
-      ],
-      tasks: [
-        TaskItem(
-          id: 't1',
-          title: 'Design MySQL Schema & Junction Table',
-          description: 'Create users, projects, project_members, and tasks tables.',
-          assignedTo: 'Puttapoom',
-          assignedStudentId: '6731501102',
-          dueDate: '2026-11-05',
-          status: 'DONE',
-          submissionUrl: 'https://github.com/mfu-team/db-schema.sql',
-          comments: [
-            CommentItem(
-              id: 'c2',
-              authorStudentId: '6731501105',
-              authorName: 'Phoo',
-              authorRole: 'PC',
-              text: 'Great job! Make sure argon2id hash column is VARCHAR(255).',
-              createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+  /// โปรเจคของผู้ใช้ปัจจุบัน — โหลดจาก SQL ผ่าน loadProjectsFromServer()
+  static List<ProjectModel> projects = <ProjectModel>[];
+
+  // ==========================================
+  // SERVER SYNC (Auth / User / Project / Member)
+  // ==========================================
+
+  /// ล้างข้อมูลผู้ใช้ + โปรเจคในเครื่อง (ใช้ตอน logout / token หมดอายุ)
+  static void clearSession() {
+    currentStudentId = '';
+    currentUserName = '';
+    currentEmail = '';
+    projects = <ProjectModel>[];
+  }
+
+  static ProjectModel _projectFromApi(
+    ProjectData d, {
+    required bool hasDetail,
+    List<TaskItem>? tasks,
+  }) {
+    final members = hasDetail
+        ? d.members
+            .map((m) => TeamMember(
+                  studentId: m.studentId,
+                  name: m.fullName.isNotEmpty ? m.fullName : m.studentId,
+                  role: m.projectRole,
+                ))
+            .toList()
+        // โหลดรายละเอียดไม่ได้: ใส่ตัวเองไว้ก่อน กัน members ว่าง
+        : <TeamMember>[
+            TeamMember(
+              studentId: currentStudentId,
+              name: currentUserName.split(' ').first,
+              role: d.myRole,
             ),
-          ],
-        ),
-        TaskItem(
-          id: 't2',
-          title: 'Build Flutter Auth & Dashboard UI',
-          description: 'Implement Lamduan email validation and multi-role cards.',
-          assignedTo: 'Menisa',
-          assignedStudentId: '6731501101',
-          dueDate: '2026-11-10',
-          status: 'IN_PROGRESS',
-          comments: [],
-        ),
-        TaskItem(
-          id: 't3',
-          title: 'JWT Role Middleware Setup',
-          description: 'Verify project_role from project_members table.',
-          assignedTo: 'Phoo',
-          assignedStudentId: '6731501105',
-          dueDate: '2026-11-12',
-          status: 'TODO',
-          comments: [],
-        ),
-        TaskItem(
-          id: 't4',
-          title: 'API Route Specifications & Tests',
-          description: 'Define Swagger API endpoints and automated test suites.',
-          assignedTo: 'Glade',
-          assignedStudentId: '6731501108',
-          dueDate: '2026-11-04', // Overdue task (past due date in local time)
-          status: 'IN_PROGRESS',
-          comments: [
-            CommentItem(
-              id: 'c1',
-              authorStudentId: '6731501108',
-              authorName: 'Glade',
-              authorRole: 'MEMBER',
-              text: 'Working on route integration tests, finishing up mocks.',
-              createdAt: DateTime.now().subtract(const Duration(days: 1)),
-            ),
-          ],
-        ),
-      ],
-    ),
-    ProjectModel(
-      id: 'p2',
-      title: 'Hospital Database System',
-      courseCode: '1305202 Database Systems',
-      description: 'ER Diagram, Normalization, and SQL Triggers for clinic.',
-      deadline: '2026-11-25',
-      myRole: 'MEMBER', // Phoo is a member in this project!
-      members: [
-        TeamMember(studentId: '6731501102', name: 'Puttapoom', role: 'PC'),
-        TeamMember(studentId: '6731501105', name: 'Phoo', role: 'MEMBER'),
-        TeamMember(studentId: '6731501109', name: 'Mary', role: 'MEMBER'),
-      ],
-      tasks: [
-        TaskItem(
-          id: 't201',
-          title: 'Write Stored Procedures for Appointments',
-          description: 'Create MySQL stored procedures and test with sample data.',
-          assignedTo: 'Phoo',
-          assignedStudentId: '6731501105',
-          dueDate: '2026-11-14',
-          status: 'IN_PROGRESS',
-          comments: [
-            CommentItem(
-              id: 'c3',
-              authorStudentId: '6731501102',
-              authorName: 'Puttapoom',
-              authorRole: 'PC',
-              text: 'Phoo, please upload the .sql link here when finished.',
-              createdAt: DateTime.now().subtract(const Duration(days: 1)),
-            ),
-          ],
-        ),
-        TaskItem(
-          id: 't202',
-          title: '3NF Normalization Report',
-          description: 'Document all functional dependencies.',
-          assignedTo: 'Mary',
-          assignedStudentId: '6731501109',
-          dueDate: '2026-11-12',
-          status: 'DONE',
-          submissionUrl: 'https://drive.google.com/file/d/3nf-report',
-        ),
-      ],
-    ),
-  ];
+          ];
+    return ProjectModel(
+      id: d.id,
+      title: d.title,
+      courseCode: d.courseCode,
+      description:
+          d.description.isEmpty ? 'No project description provided.' : d.description,
+      deadline: d.deadline,
+      myRole: d.myRole,
+      members: members,
+      tasks: tasks ?? <TaskItem>[], // ส่วน Task อยู่นอกขอบเขตรอบนี้
+    );
+  }
+
+  /// GET /api/projects + GET /api/projects/:id (เอาสมาชิก) แล้วแทนที่ [projects]
+  /// โยน ApiException ออกไปให้หน้าจอจัดการ (401 -> กลับหน้า login)
+  static Future<void> loadProjectsFromServer() async {
+    final pc = ProjectController();
+    final list = await pc.getProjects();
+    final oldTasks = {for (final p in projects) p.id: p.tasks};
+
+    final details = await Future.wait(list.map((p) async {
+      try {
+        return await pc.getProject(p.id);
+      } on ApiException catch (e) {
+        if (e.statusCode == 401) rethrow;
+        return null;
+      }
+    }));
+
+    final loaded = <ProjectModel>[];
+    for (var i = 0; i < list.length; i++) {
+      final detail = details[i];
+      loaded.add(_projectFromApi(
+        detail ?? list[i],
+        hasDetail: detail != null,
+        tasks: oldTasks[list[i].id],
+      ));
+    }
+    projects = loaded;
+  }
+
+  /// ดึงรายชื่อสมาชิกล่าสุดของโปรเจคเดียว แล้วอัปเดตในอ็อบเจกต์เดิม
+  static Future<void> refreshProjectMembers(String projectId) async {
+    final idx = projects.indexWhere((p) => p.id == projectId);
+    if (idx < 0) return;
+    final d = await ProjectController().getProject(projectId);
+    final fresh = _projectFromApi(d, hasDetail: true);
+    projects[idx].members
+      ..clear()
+      ..addAll(fresh.members);
+  }
+
+  /// เหมือน removeMemberFromProject แต่ยิง DELETE /api/projects/:id/members/:studentId จริง
+  static Future<RemoveMemberResult> removeMemberViaApi({
+    required String projectId,
+    required String memberStudentId,
+    required String actingStudentId,
+  }) async {
+    final projectIndex = projects.indexWhere((p) => p.id == projectId);
+    if (projectIndex == -1) {
+      return const RemoveMemberResult(success: false, message: 'Project not found.');
+    }
+    final project = projects[projectIndex];
+
+    final actingMember = project.members.firstWhere(
+      (m) => m.studentId == actingStudentId,
+      orElse: () => TeamMember(studentId: '', name: '', role: ''),
+    );
+    final isActingPC = actingMember.role.toUpperCase() == 'PC' ||
+        (actingStudentId == currentStudentId && project.isCurrentUserPC);
+    if (!isActingPC) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Only that project’s PC can remove members.',
+      );
+    }
+
+    final memberIndex = project.members.indexWhere((m) => m.studentId == memberStudentId);
+    if (memberIndex == -1) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Member not found in this project.',
+      );
+    }
+    if (project.members[memberIndex].role.toUpperCase() == 'PC') {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'The project PC cannot be removed.',
+      );
+    }
+    if (project.tasks.any((t) => t.assignedStudentId == memberStudentId)) {
+      return const RemoveMemberResult(
+        success: false,
+        message: 'Please reassign this member’s tasks before removing them.',
+      );
+    }
+
+    try {
+      await MemberController().removeMember(projectId, memberStudentId);
+    } on ApiException catch (e) {
+      return RemoveMemberResult(success: false, message: e.message);
+    }
+    project.members.removeWhere((m) => m.studentId == memberStudentId);
+    return const RemoveMemberResult(
+      success: true,
+      message: 'Member removed successfully.',
+    );
+  }
 
   /// Structured in-memory notification store.
   /// Demo records link to valid projects and tasks addressed to Phoo (6731501105).

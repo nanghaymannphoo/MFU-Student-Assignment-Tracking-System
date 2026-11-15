@@ -47,9 +47,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   /// token หมดอายุ / ไม่ถูกต้อง -> กลับหน้า login
   void _goToLogin() {
-    WorkspaceStore.currentStudentId = '';
-    WorkspaceStore.currentUserName = '';
-    WorkspaceStore.currentEmail = '';
+    WorkspaceStore.clearSession();
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthScreen()),
       (route) => false,

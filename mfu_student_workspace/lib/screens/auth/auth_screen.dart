@@ -69,6 +69,13 @@ class _AuthScreenState extends State<AuthScreen> {
         WorkspaceStore.currentStudentId = user.studentId;
         WorkspaceStore.currentUserName = user.fullName;
         WorkspaceStore.currentEmail = user.email;
+        // โหลดโปรเจค/สมาชิกจาก SQL มาแทนข้อมูลเดิมใน store
+        try {
+          await WorkspaceStore.loadProjectsFromServer();
+        } on ApiException catch (_) {
+          // โหลดไม่สำเร็จก็เข้าแอปได้ แล้วดึงใหม่ตอน pull-to-refresh ที่ Dashboard
+        }
+        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const MainNavigationShell()),
@@ -362,6 +369,7 @@ class _AuthGateState extends State<AuthGate> {
       WorkspaceStore.currentStudentId = me.studentId;
       WorkspaceStore.currentUserName = me.fullName;
       WorkspaceStore.currentEmail = me.email;
+      await WorkspaceStore.loadProjectsFromServer();
       if (mounted) setState(() => _status = _GateStatus.authenticated);
     } on ApiException catch (e) {
       if (e.statusCode == 401 || e.statusCode == 404) {

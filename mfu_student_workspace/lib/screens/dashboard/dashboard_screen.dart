@@ -584,7 +584,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: RefreshIndicator(
             color: AppColors.primary,
             onRefresh: () async {
+              try {
+                await WorkspaceStore.loadProjectsFromServer();
+              } on ApiException catch (_) {}
               WorkspaceStore.checkOverdueTasksAndNotify();
+              if (!mounted) return;
               setState(() {});
               widget.onRefresh();
             },

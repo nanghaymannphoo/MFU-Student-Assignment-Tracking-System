@@ -44,6 +44,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     super.initState();
     // Check overdue tasks and notify on entry
     WorkspaceStore.checkOverdueTasksAndNotify();
+    // ซิงก์รายชื่อสมาชิกล่าสุดจาก SQL (เงียบ ๆ ถ้าล้มเหลวก็ใช้ข้อมูลเดิม)
+    WorkspaceStore.refreshProjectMembers(widget.project.id).then((_) {
+      if (mounted) setState(() {});
+    }).catchError((_) {});
   }
 
   void _snack(String text, {bool isError = false}) {
@@ -371,13 +375,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     );
   }
 
-  void _executeRemoveMember(TeamMember member) {
+  Future<void> _executeRemoveMember(TeamMember member) async {
     // Recheck permissions and assignments in the store handler before changing data
-    final result = WorkspaceStore.removeMemberFromProject(
+    // แล้วยิง DELETE /api/projects/:id/members/:studentId จริง
+    final result = await WorkspaceStore.removeMemberViaApi(
       projectId: widget.project.id,
       memberStudentId: member.studentId,
       actingStudentId: WorkspaceStore.currentStudentId,
     );
+    if (!mounted) return;
 
     if (!result.success) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
