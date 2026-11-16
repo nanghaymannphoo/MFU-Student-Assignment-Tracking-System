@@ -5,7 +5,16 @@ import '../../data/workspace_store.dart';
 import '../auth/auth_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final UserController? userController;
+  final ProjectController? projectController;
+  final AuthController? authController;
+
+  const ProfileScreen({
+    super.key,
+    this.userController,
+    this.projectController,
+    this.authController,
+  });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -16,9 +25,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _nameCtrl;
   late TextEditingController _emailCtrl;
 
-  final _userController = UserController();
-  final _projectController = ProjectController();
-  final _authController = AuthController();
+  late final UserController _userController;
+  late final ProjectController _projectController;
+  late final AuthController _authController;
 
   bool _loading = true; // กำลังโหลดโปรไฟล์จาก server
   bool _saving = false; // กำลังบันทึก
@@ -27,9 +36,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _userController = widget.userController ?? UserController();
+    _projectController = widget.projectController ?? ProjectController();
+    _authController = widget.authController ?? AuthController();
     _nameCtrl = TextEditingController(text: WorkspaceStore.currentUserName);
     _emailCtrl = TextEditingController(text: WorkspaceStore.currentEmail);
-    _loadProfile();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadProfile();
+    });
   }
 
   void _showMessage(String text, {bool isError = false}) {

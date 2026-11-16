@@ -7,7 +7,9 @@ import '../../navigation/main_navigation_shell.dart';
 import '../../services/auth_service.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  final AuthController? authController;
+
+  const AuthScreen({super.key, this.authController});
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -20,12 +22,18 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmPasswordCtrl = TextEditingController();
-  final _authController = AuthController();
+  late final AuthController _authController;
 
   bool _isLogin = true;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authController = widget.authController ?? AuthController();
+  }
 
   @override
   void dispose() {
