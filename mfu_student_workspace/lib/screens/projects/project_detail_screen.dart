@@ -48,6 +48,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     WorkspaceStore.refreshProjectMembers(widget.project.id).then((_) {
       if (mounted) setState(() {});
     }).catchError((_) {});
+    // ซิงก์งานล่าสุดจาก API (GET /api/projects/:id/tasks)
+    WorkspaceStore.refreshProjectTasks(widget.project.id).then((_) {
+      if (mounted) setState(() {});
+    }).catchError((_) {});
   }
 
   void _snack(String text, {bool isError = false}) {
@@ -74,13 +78,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         widget.project.id,
         title: title,
         message: message,
-      );
-      // TODO: ลบเมื่อหน้า Notifications ดึงจาก API (ตอนนี้ยังอ่านจาก store ในเครื่อง)
-      WorkspaceStore.onProjectAnnouncement(
-        project: widget.project,
-        title: title,
-        message: message,
-        actorStudentId: WorkspaceStore.currentStudentId,
       );
       _snack('Reminder sent to $sent team member${sent == 1 ? '' : 's'}!');
     } on ApiException catch (e) {
@@ -417,6 +414,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   void _showAddTaskBottomSheet() {
     final formKey = GlobalKey<FormState>();
     final taskTitleCtrl = TextEditingController();
+    var saving = false; // กันกด Save ซ้ำระหว่างรอ API
 
     // Default assignee to first member
     String selectedStudentId = widget.project.members.isNotEmpty
@@ -532,61 +530,50 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             backgroundColor: AppColors.primary,
                             minimumSize: const Size(0, 46),
                           ),
-                          onPressed: () {
-                            if (!formKey.currentState!.validate()) return;
-                            final title = taskTitleCtrl.text.trim();
-                            final member = widget.project.members.firstWhere(
-                              (m) => m.studentId == selectedStudentId,
-                              orElse: () => TeamMember(
-                                studentId: selectedStudentId,
-                                name: selectedStudentId,
-                                role: 'MEMBER',
-                              ),
-                            );
+                          onPressed: saving
+                              ? null
+                              : () async {
+                                  if (!formKey.currentState!.validate()) return;
+                                  final title = taskTitleCtrl.text.trim();
+                                  setSheetState(() => saving = true);
+                                  try {
+                                    // POST /api/projects/:id/tasks (PC เท่านั้น)
+                                    // server แจ้งผู้รับงานเอง จึงไม่ต้องสร้าง notification ในเครื่อง
+                                    await WorkspaceStore.createTaskViaApi(
+                                      widget.project,
+                                      title: title,
+                                      assigneeStudentId: selectedStudentId,
+                                    );
+                                  } on ApiException catch (e) {
+                                    if (ctx.mounted) setSheetState(() => saving = false);
+                                    _snack(e.message, isError: true);
+                                    return;
+                                  }
 
-                            final newTask = TaskItem(
-                              id: 't_${DateTime.now().millisecondsSinceEpoch}',
-                              title: title,
-                              description: 'No description',
-                              assignedTo: member.name,
-                              assignedStudentId: member.studentId,
-                              dueDate: widget.project.deadline,
-                              status: 'TODO',
-                            );
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                  if (!mounted) return;
+                                  setState(() {});
+                                  WorkspaceStore.checkOverdueTasksAndNotify();
 
-                            setState(() {
-                              widget.project.tasks.add(newTask);
-                            });
-
-                            WorkspaceStore.onTaskAssignedOrReassigned(
-                              project: widget.project,
-                              task: newTask,
-                              newAssigneeStudentId: newTask.assignedStudentId,
-                              actorStudentId: WorkspaceStore.currentStudentId,
-                            );
-
-                            Navigator.pop(ctx);
-                            WorkspaceStore.checkOverdueTasksAndNotify();
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Task "$title" created!'),
-                                backgroundColor: AppColors.primary,
-                                behavior: SnackBarBehavior.floating,
-                                action: SnackBarAction(
-                                  label: 'View in Track',
-                                  textColor: AppColors.gold,
-                                  onPressed: () {
-                                    setState(() {
-                                      _selectedTab = 1;
-                                      _selectedTrackSubTab = 0;
-                                      _selectedFilter = 'TODO';
-                                    });
-                                  },
-                                ),
-                              ),
-                            );
-                          },
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Task "$title" created!'),
+                                      backgroundColor: AppColors.primary,
+                                      behavior: SnackBarBehavior.floating,
+                                      action: SnackBarAction(
+                                        label: 'View in Track',
+                                        textColor: AppColors.gold,
+                                        onPressed: () {
+                                          setState(() {
+                                            _selectedTab = 1;
+                                            _selectedTrackSubTab = 0;
+                                            _selectedFilter = 'TODO';
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                },
                           icon: const Icon(Icons.add, size: 18),
                           label: const Text('Save Task'),
                         ),
@@ -740,22 +727,20 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     );
 
     if (confirmed == true && mounted) {
-      final success = WorkspaceStore.extendTaskDeadline(
-        project: widget.project,
-        task: task,
-        newDueDate: newDateStr,
-        actorStudentId: WorkspaceStore.currentStudentId,
-      );
-
-      if (success) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.primary,
-            content: Text('Deadline extended to $newDateStr! Overdue alerts resolved.'),
-            behavior: SnackBarBehavior.floating,
-          ),
+      try {
+        final success = await WorkspaceStore.extendTaskDeadline(
+          project: widget.project,
+          task: task,
+          newDueDate: newDateStr,
+          actorStudentId: WorkspaceStore.currentStudentId,
         );
+        if (!mounted) return;
+        if (success) {
+          setState(() {});
+          _snack('Deadline extended to $newDateStr! Overdue alerts resolved.');
+        }
+      } on ApiException catch (e) {
+        _snack(e.message, isError: true);
       }
     }
   }
@@ -787,19 +772,19 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               backgroundColor: AppColors.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
-              setState(() {
-                widget.project.tasks.remove(task);
-              });
-              Navigator.pop(ctx);
+            onPressed: () async {
+              try {
+                await WorkspaceStore.deleteTaskViaApi(widget.project, task);
+              } on ApiException catch (e) {
+                if (ctx.mounted) Navigator.pop(ctx);
+                _snack(e.message, isError: true);
+                return;
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (!mounted) return;
+              setState(() {});
               WorkspaceStore.checkOverdueTasksAndNotify();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Deleted "${task.title}"'),
-                  backgroundColor: AppColors.primary,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              _snack('Deleted "${task.title}"');
             },
             child: const Text('Delete'),
           ),
@@ -2114,7 +2099,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       PopupMenuButton<String>(
                         tooltip: 'Task actions & status',
                         initialValue: task.status,
-                        onSelected: (val) {
+                        onSelected: (val) async {
                           if (val == 'EXTEND') {
                             _showExtendDeadlineDialog(task);
                             return;
@@ -2123,24 +2108,24 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             _confirmDeleteTask(task);
                             return;
                           }
-                          setState(() {
-                            task.setStatus(val);
-                          });
-                          WorkspaceStore.onStatusChanged(
-                            project: widget.project,
-                            task: task,
-                            newStatus: val,
-                            actorStudentId: WorkspaceStore.currentStudentId,
-                          );
-                          WorkspaceStore.checkOverdueTasksAndNotify();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Updated "${task.title}" to ${formatStatus(val)}'),
-                              backgroundColor: AppColors.primary,
-                              duration: const Duration(seconds: 1),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
+                          if (val == task.status) return;
+                          try {
+                            // PATCH /api/tasks/:id/status (PC หรือผู้รับงาน)
+                            await WorkspaceStore.updateStatusViaApi(task, val);
+                            if (!mounted) return;
+                            setState(() {});
+                            WorkspaceStore.checkOverdueTasksAndNotify();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Updated "${task.title}" to ${formatStatus(val)}'),
+                                backgroundColor: AppColors.primary,
+                                duration: const Duration(seconds: 1),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          } on ApiException catch (e) {
+                            _snack(e.message, isError: true);
+                          }
                         },
                         itemBuilder: (ctx) => [
                           const PopupMenuItem(

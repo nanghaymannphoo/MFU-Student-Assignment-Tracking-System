@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../controller/api_controller.dart';
 import '../core/constants/app_colors.dart';
 import '../data/workspace_store.dart';
 import '../screens/dashboard/dashboard_screen.dart';
@@ -20,22 +21,36 @@ class _MainNavigationShellState extends State<MainNavigationShell>
   Timer? _overdueCheckTimer;
 
   @override
+  
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // Initial check when the shell starts
     WorkspaceStore.checkOverdueTasksAndNotify();
+    _syncNotifications();
     // Periodic check while app is open so overdue badges and notifications stay current
     _overdueCheckTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       WorkspaceStore.checkOverdueTasksAndNotify();
+      _syncNotifications();
       if (mounted) setState(() {});
     });
+  }
+
+  /// GET /api/notifications เบื้องหลัง เพื่ออัปเดต badge/รายการ (ถ้าล้มเหลวใช้ของเดิม)
+  Future<void> _syncNotifications() async {
+    try {
+      await WorkspaceStore.loadNotificationsFromServer();
+    } on ApiException catch (_) {
+      // เงียบไว้ — ไม่รบกวนผู้ใช้ตอนออฟไลน์/โทเคนหมดอายุ
+    }
+    if (mounted) setState(() {});
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       WorkspaceStore.checkOverdueTasksAndNotify();
+      _syncNotifications();
       if (mounted) setState(() {});
     }
   }
@@ -77,7 +92,10 @@ class _MainNavigationShellState extends State<MainNavigationShell>
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (idx) => setState(() => _selectedIndex = idx),
+        onDestinationSelected: (idx) {
+          setState(() => _selectedIndex = idx);
+          if (idx == 2) _syncNotifications(); // เปิดแท็บแจ้งเตือน -> ดึงล่าสุด
+        },
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
@@ -118,3 +136,4 @@ class _MainNavigationShellState extends State<MainNavigationShell>
     );
   }
 }
+

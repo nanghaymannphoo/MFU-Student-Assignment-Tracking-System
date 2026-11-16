@@ -337,12 +337,15 @@ class MemberController extends BaseController {
 class TaskController extends BaseController {
   // list -> GET /api/projects/:projectId/tasks (สมาชิกของโปรเจคเท่านั้น)
   Future<List<TaskData>> getTasks(String projectId) {
+    //guard() – ใช้จัดการข้อผิดพลาดในการเรียก API
     return guard(() async {
       final response = await http.get(
         Uri.parse('$baseURL/projects/$projectId/tasks'),
         headers: await authHeaders(),
+        //authHeaders() – ใช้สร้าง HTTP Headers สำหรับยืนยันตัวตน
       );
       List<dynamic> data = decode(response);
+      //decode() – ใช้ตรวจสอบและแปลง Response จาก Server
       return data.map((json) => TaskData.fromJSON(json)).toList();
     });
   }
@@ -503,6 +506,10 @@ class NotificationController extends BaseController {
         Uri.parse('$baseURL/notifications'),
         headers: await authHeaders(),
       );
+
+
+
+      
       List<dynamic> data = decode(response);
       return data.map((json) => NotificationData.fromJSON(json)).toList();
     });

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_picker_utils.dart';
 import '../../core/utils/status_helpers.dart';
@@ -27,10 +28,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   final TextEditingController _commentCtrl = TextEditingController();
   final _uploadFormKey = GlobalKey<FormState>();
 
+  bool _loadingComments = true; // กำลังโหลดคอมเมนต์จาก API
+  bool _busy = false; // กำลังส่งงาน (กันกดซ้ำ)
+  bool _sending = false; // กำลังส่งคอมเมนต์ (กันกดซ้ำ)
+  int _statusNonce = 0; // เปลี่ยนค่าเพื่อรีเซ็ต dropdown สถานะให้ตรงกับข้อมูลจริง
+
   @override
   void initState() {
     super.initState();
     _uploadUrlCtrl = TextEditingController(text: widget.task.submissionUrl ?? '');
+    _loadFromServer();
   }
 
   @override
@@ -38,6 +45,50 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _uploadUrlCtrl.dispose();
     _commentCtrl.dispose();
     super.dispose();
+  }
+
+  void _snack(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  /// GET /api/tasks/:id (ข้อมูลงานล่าสุด) + GET /api/tasks/:id/comments
+  Future<void> _loadFromServer() async {
+    try {
+      final fresh = await TaskController().getTask(widget.task.id);
+      if (!mounted) return;
+      setState(() {
+        WorkspaceStore.applyTaskData(widget.task, fresh);
+        if (_uploadUrlCtrl.text.isEmpty) {
+          _uploadUrlCtrl.text = widget.task.submissionUrl ?? '';
+        }
+        _statusNonce++;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 404) {
+        widget.project.tasks.remove(widget.task);
+        _snack('This task has been deleted or is no longer available.', isError: true);
+        Navigator.pop(context, true);
+        return;
+      }
+      _snack(e.message, isError: true);
+    }
+
+    try {
+      await WorkspaceStore.loadCommentsForTask(widget.task);
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+    }
+    if (mounted) setState(() => _loadingComments = false);
   }
 
   /// Opens date picker and confirmation dialog to extend task deadline (PC only).
@@ -195,22 +246,20 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
 
     if (confirmed == true && mounted) {
-      final success = WorkspaceStore.extendTaskDeadline(
-        project: widget.project,
-        task: widget.task,
-        newDueDate: newDateStr,
-        actorStudentId: WorkspaceStore.currentStudentId,
-      );
-
-      if (success) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.primary,
-            content: Text('Deadline extended to $newDateStr! Assignee has been notified.'),
-            behavior: SnackBarBehavior.floating,
-          ),
+      try {
+        final success = await WorkspaceStore.extendTaskDeadline(
+          project: widget.project,
+          task: widget.task,
+          newDueDate: newDateStr,
+          actorStudentId: WorkspaceStore.currentStudentId,
         );
+        if (!mounted) return;
+        if (success) {
+          setState(() {});
+          _snack('Deadline extended to $newDateStr! Assignee has been notified.');
+        }
+      } on ApiException catch (e) {
+        _snack(e.message, isError: true);
       }
     }
   }
@@ -220,6 +269,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final titleCtrl = TextEditingController(text: widget.task.title);
     final descCtrl = TextEditingController(text: widget.task.description);
     final dueCtrl = TextEditingController(text: widget.task.dueDate);
+    var saving = false; // กันกด Save ซ้ำระหว่างรอ API
 
     // Initial selected student ID
     String selectedStudentId = widget.task.assignedStudentId.isNotEmpty
@@ -311,8 +361,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: AppColors.primary,
               minimumSize: const Size(120, 40),
             ),
-            onPressed: () {
-              if (!formKey.currentState!.validate()) return;
+            onPressed: () async {
+              if (saving || !formKey.currentState!.validate()) return;
               final member = widget.project.members.firstWhere(
                 (m) => m.studentId == selectedStudentId,
                 orElse: () => TeamMember(
@@ -322,34 +372,29 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
               );
 
-              final previousAssigneeId = widget.task.assignedStudentId;
-
-              setState(() {
-                widget.task.title = titleCtrl.text.trim();
-                widget.task.description = descCtrl.text.trim();
-                widget.task.dueDate = dueCtrl.text.trim();
-                widget.task.assignedStudentId = member.studentId;
-                widget.task.assignedTo = member.name;
-              });
-
-              if (member.studentId != previousAssigneeId) {
-                WorkspaceStore.onTaskAssignedOrReassigned(
-                  project: widget.project,
-                  task: widget.task,
-                  newAssigneeStudentId: member.studentId,
-                  actorStudentId: WorkspaceStore.currentStudentId,
+              saving = true;
+              try {
+                // PUT /api/tasks/:id (+ PATCH /assign ถ้าเปลี่ยนผู้รับงาน)
+                await WorkspaceStore.updateTaskViaApi(
+                  widget.task,
+                  title: titleCtrl.text.trim(),
+                  description: descCtrl.text.trim(),
+                  dueDate: dueCtrl.text.trim(),
+                  assigneeStudentId: member.studentId,
+                  assigneeName: member.name,
                 );
+              } on ApiException catch (e) {
+                saving = false;
+                if (mounted) setState(() {});
+                _snack(e.message, isError: true);
+                return;
               }
 
-              Navigator.pop(ctx);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (!mounted) return;
+              setState(() {});
               WorkspaceStore.checkOverdueTasksAndNotify();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Task changes saved successfully!'),
-                  backgroundColor: AppColors.primary,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              _snack('Task changes saved successfully!');
             },
             child: const Text('Save Changes'),
           ),
@@ -385,13 +430,22 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               backgroundColor: AppColors.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
-              widget.project.tasks.remove(widget.task);
-              Navigator.pop(ctx);
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final title = widget.task.title;
+              try {
+                await WorkspaceStore.deleteTaskViaApi(widget.project, widget.task);
+              } on ApiException catch (e) {
+                if (ctx.mounted) Navigator.pop(ctx);
+                _snack(e.message, isError: true);
+                return;
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (!mounted) return;
               Navigator.pop(context, true);
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger.showSnackBar(
                 SnackBar(
-                  content: Text('Deleted "${widget.task.title}"'),
+                  content: Text('Deleted "$title"'),
                   backgroundColor: AppColors.primary,
                   behavior: SnackBarBehavior.floating,
                 ),
@@ -576,6 +630,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
                       // Status Dropdown selector
                       DropdownButtonFormField<String>(
+                        key: ValueKey('task_status_$_statusNonce'),
                         initialValue: widget.task.status,
                         decoration: const InputDecoration(
                           labelText: 'Update Task Status',
@@ -586,24 +641,20 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           DropdownMenuItem(value: 'IN_PROGRESS', child: Text('In Progress (Active)')),
                           DropdownMenuItem(value: 'DONE', child: Text('Completed (Done)')),
                         ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => widget.task.setStatus(val));
-                            WorkspaceStore.onStatusChanged(
-                              project: widget.project,
-                              task: widget.task,
-                              newStatus: val,
-                              actorStudentId: WorkspaceStore.currentStudentId,
-                            );
+                        onChanged: (val) async {
+                          if (val == null || val == widget.task.status) return;
+                          try {
+                            // PATCH /api/tasks/:id/status
+                            await WorkspaceStore.updateStatusViaApi(widget.task, val);
+                            if (!mounted) return;
+                            setState(() {});
                             WorkspaceStore.checkOverdueTasksAndNotify();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Status changed to ${formatStatus(val)}'),
-                                backgroundColor: AppColors.primary,
-                                behavior: SnackBarBehavior.floating,
-                                duration: const Duration(seconds: 1),
-                              ),
-                            );
+                            _snack('Status changed to ${formatStatus(val)}');
+                          } on ApiException catch (e) {
+                            if (!mounted) return;
+                            // คืนค่า dropdown กลับเป็นสถานะจริง
+                            setState(() => _statusNonce++);
+                            _snack(e.message, isError: true);
                           }
                         },
                       ),
@@ -669,33 +720,30 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                 width: double.infinity,
                                 height: 46,
                                 child: FilledButton.icon(
-                                  onPressed: () {
-                                    if (!_uploadFormKey.currentState!.validate()) return;
-                                    setState(() {
-                                      widget.task.submissionUrl = _uploadUrlCtrl.text.trim();
-                                      widget.task.submittedAt = DateTime.now();
-                                      widget.task.setStatus('DONE');
-                                    });
-                                    WorkspaceStore.onWorkSubmitted(
-                                      project: widget.project,
-                                      task: widget.task,
-                                      actorStudentId: WorkspaceStore.currentStudentId,
-                                    );
-                                    WorkspaceStore.onStatusChanged(
-                                      project: widget.project,
-                                      task: widget.task,
-                                      newStatus: 'DONE',
-                                      actorStudentId: WorkspaceStore.currentStudentId,
-                                    );
-                                    WorkspaceStore.checkOverdueTasksAndNotify();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        backgroundColor: AppColors.primary,
-                                        content: Text('Deliverable saved! Status updated to Completed.'),
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
-                                    );
-                                  },
+                                  onPressed: _busy
+                                      ? null
+                                      : () async {
+                                          if (!_uploadFormKey.currentState!.validate()) return;
+                                          setState(() => _busy = true);
+                                          try {
+                                            // POST /api/tasks/:id/submission แล้วตั้งสถานะ DONE
+                                            await WorkspaceStore.submitWorkViaApi(
+                                              widget.task,
+                                              _uploadUrlCtrl.text.trim(),
+                                            );
+                                            WorkspaceStore.checkOverdueTasksAndNotify();
+                                            _snack('Deliverable saved! Status updated to Completed.');
+                                          } on ApiException catch (e) {
+                                            _snack(e.message, isError: true);
+                                          } finally {
+                                            if (mounted) {
+                                              setState(() {
+                                                _busy = false;
+                                                _statusNonce++;
+                                              });
+                                            }
+                                          }
+                                        },
                                   icon: const Icon(Icons.check_rounded, size: 18),
                                   label: const Text('Save Submission Link & Mark Completed'),
                                 ),
@@ -782,7 +830,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                if (widget.task.comments.isEmpty)
+                if (_loadingComments && widget.task.comments.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                else if (widget.task.comments.isEmpty)
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
@@ -903,49 +956,32 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),
-                    onPressed: () {
-                      final isParticipant = widget.project.members.any(
-                        (m) => m.studentId == WorkspaceStore.currentStudentId,
-                      );
-                      if (!isParticipant) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Only project participants can comment on this task.'),
-                            backgroundColor: AppColors.danger,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                        return;
-                      }
+                    onPressed: _sending
+                        ? null
+                        : () async {
+                            final isParticipant = widget.project.members.any(
+                              (m) => m.studentId == WorkspaceStore.currentStudentId,
+                            );
+                            if (!isParticipant) {
+                              _snack('Only project participants can comment on this task.',
+                                  isError: true);
+                              return;
+                            }
 
-                      final text = _commentCtrl.text.trim();
-                      if (text.isEmpty) return;
+                            final text = _commentCtrl.text.trim();
+                            if (text.isEmpty) return;
 
-                      final commentId = 'c_${DateTime.now().millisecondsSinceEpoch}';
-                      setState(() {
-                        widget.task.comments.add(
-                          CommentItem(
-                            id: commentId,
-                            authorStudentId: WorkspaceStore.currentStudentId,
-                            authorName: WorkspaceStore.currentUserName.split(' ').first,
-                            authorRole: widget.project.myRole,
-                            text: text,
-                            createdAt: DateTime.now(),
-                          ),
-                        );
-                        _commentCtrl.clear();
-                      });
-
-                      // Generate a comment notification only after the comment is saved
-                      WorkspaceStore.onCommentAdded(
-                        project: widget.project,
-                        task: widget.task,
-                        commentText: text,
-                        actorStudentId: WorkspaceStore.currentStudentId,
-                        actorName: WorkspaceStore.currentUserName.split(' ').first,
-                        commentId: commentId,
-                      );
-                    },
+                            setState(() => _sending = true);
+                            try {
+                              // POST /api/tasks/:id/comments (server แจ้งเตือนอีกฝ่ายเอง)
+                              await WorkspaceStore.addCommentViaApi(widget.task, text);
+                              if (mounted) _commentCtrl.clear();
+                            } on ApiException catch (e) {
+                              _snack(e.message, isError: true);
+                            } finally {
+                              if (mounted) setState(() => _sending = false);
+                            }
+                          },
                     icon: const Icon(Icons.send_rounded, size: 18),
                   ),
                 ],
@@ -983,20 +1019,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    // Only the author may delete a comment (same rule as the database API).
-    final removed = WorkspaceStore.deleteCommentIfAuthor(
-      task: widget.task,
-      commentId: comment.id,
-      actorStudentId: WorkspaceStore.currentStudentId,
-    );
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(removed ? 'Comment deleted' : 'You can only delete your own comments'),
-        backgroundColor: removed ? AppColors.primary : AppColors.danger,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    // DELETE /api/comments/:id — server ตรวจว่าเป็นคอมเมนต์ของเราเอง (404 = ไม่ใช่ของเรา/ไม่พบ)
+    try {
+      await WorkspaceStore.deleteCommentViaApi(widget.task, comment);
+      if (!mounted) return;
+      setState(() {});
+      _snack('Comment deleted');
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+    }
   }
 
   Widget _buildStatusBadge(String status) {

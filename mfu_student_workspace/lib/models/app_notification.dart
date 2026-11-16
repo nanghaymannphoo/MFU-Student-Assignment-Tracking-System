@@ -14,6 +14,8 @@ class AppNotification {
   final DateTime createdAt;
   DateTime? readAt;
   bool isRead;
+  /// true = แจ้งเตือนที่แอปสร้างเองในเครื่อง (เช่น OVERDUE) ไม่มีอยู่บน server
+  final bool isLocal;
 
   AppNotification({
     required this.id,
@@ -31,6 +33,7 @@ class AppNotification {
     required this.createdAt,
     this.readAt,
     this.isRead = false,
+    this.isLocal = false,
   });
 
   /// Derives human-readable relative time from real stored createdAt timestamp.

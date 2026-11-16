@@ -31,6 +31,7 @@ class WorkspaceStore {
     currentUserName = '';
     currentEmail = '';
     projects = <ProjectModel>[];
+    notifications = <AppNotification>[];
   }
 
   static ProjectModel _projectFromApi(
@@ -63,14 +64,16 @@ class WorkspaceStore {
       deadline: d.deadline,
       myRole: d.myRole,
       members: members,
-      tasks: tasks ?? <TaskItem>[], // ส่วน Task อยู่นอกขอบเขตรอบนี้
+      tasks: tasks ?? <TaskItem>[], // งานโหลดแยกผ่าน GET /api/projects/:id/tasks
     );
   }
 
-  /// GET /api/projects + GET /api/projects/:id (เอาสมาชิก) แล้วแทนที่ [projects]
+  /// GET /api/projects + GET /api/projects/:id (สมาชิก) + GET /api/projects/:id/tasks
+  /// แล้วแทนที่ [projects] — งานเดิมในเครื่องจะถูกอัปเดตในอ็อบเจกต์เดิม (คอมเมนต์ไม่หาย)
   /// โยน ApiException ออกไปให้หน้าจอจัดการ (401 -> กลับหน้า login)
   static Future<void> loadProjectsFromServer() async {
     final pc = ProjectController();
+    final tc = TaskController();
     final list = await pc.getProjects();
     final oldTasks = {for (final p in projects) p.id: p.tasks};
 
@@ -83,13 +86,25 @@ class WorkspaceStore {
       }
     }));
 
+    final taskData = await Future.wait(list.map((p) async {
+      try {
+        return await tc.getTasks(p.id);
+      } on ApiException catch (e) {
+        if (e.statusCode == 401) rethrow;
+        return null; // โหลดไม่ได้ -> ใช้งานเดิมในเครื่องไปก่อน
+      }
+    }));
+
     final loaded = <ProjectModel>[];
     for (var i = 0; i < list.length; i++) {
       final detail = details[i];
+      final data = taskData[i];
       loaded.add(_projectFromApi(
         detail ?? list[i],
         hasDetail: detail != null,
-        tasks: oldTasks[list[i].id],
+        tasks: data == null
+            ? oldTasks[list[i].id]
+            : _mergeTasks(oldTasks[list[i].id], data),
       ));
     }
     projects = loaded;
@@ -163,57 +178,9 @@ class WorkspaceStore {
     );
   }
 
-  /// Structured in-memory notification store.
-  /// Demo records link to valid projects and tasks addressed to Phoo (6731501105).
-  static List<AppNotification> notifications = [
-    AppNotification(
-      id: 'demo_n1',
-      eventId: 'assign_t201_6731501105',
-      type: 'TASK_ASSIGNED',
-      title: 'Task Assigned',
-      message: 'Puttapoom assigned you "Write Stored Procedures for Appointments".',
-      recipientStudentId: '6731501105',
-      actorStudentId: '6731501102',
-      projectId: 'p2',
-      taskId: 't201',
-      projectName: 'Hospital Database System',
-      taskTitle: 'Write Stored Procedures for Appointments',
-      createdAt: DateTime.now().subtract(const Duration(minutes: 45)),
-      isRead: false,
-    ),
-    AppNotification(
-      id: 'demo_n2',
-      eventId: 'submit_t1_6731501105',
-      type: 'SUBMISSION',
-      title: 'Deliverable Submitted',
-      message: 'Puttapoom submitted work for "Design MySQL Schema & Junction Table".',
-      recipientStudentId: '6731501105',
-      actorStudentId: '6731501102',
-      projectId: 'p1',
-      taskId: 't1',
-      projectName: 'Student Assignment Tracker',
-      taskTitle: 'Design MySQL Schema & Junction Table',
-      createdAt: DateTime.now().subtract(const Duration(hours: 3)),
-      isRead: false,
-    ),
-    AppNotification(
-      id: 'demo_n3',
-      eventId: 'comment_t4_c1_6731501105',
-      type: 'COMMENT',
-      title: 'New Comment',
-      message: 'Glade: "Working on route integration tests, finishing up mocks."',
-      recipientStudentId: '6731501105',
-      actorStudentId: '6731501108',
-      projectId: 'p1',
-      taskId: 't4',
-      commentId: 'c1',
-      projectName: 'Student Assignment Tracker',
-      taskTitle: 'API Route Specifications & Tests',
-      createdAt: DateTime.now().subtract(const Duration(days: 1)),
-      isRead: true,
-      readAt: DateTime.now().subtract(const Duration(hours: 12)),
-    ),
-  ];
+  /// การแจ้งเตือนของผู้ใช้ปัจจุบัน — โหลดจาก GET /api/notifications (loadNotificationsFromServer)
+  /// ยกเว้นแจ้งเตือน OVERDUE ที่แอปสร้างเอง (isLocal) ซึ่งเก็บไว้ในเครื่อง
+  static List<AppNotification> notifications = <AppNotification>[];
 
   /// Resolves member display name using known student records.
   static String resolveMemberName(String studentId) {
@@ -258,8 +225,9 @@ class WorkspaceStore {
 
   /// Returns notifications addressed strictly to the signed-in user.
   static List<AppNotification> getNotificationsForCurrentUser() {
+    // แจ้งเตือนจาก server เป็นของผู้ใช้ปัจจุบันเสมอ; แจ้งเตือนที่สร้างในเครื่องต้องเช็กผู้รับ
     return notifications
-        .where((n) => n.recipientStudentId == currentStudentId)
+        .where((n) => !n.isLocal || n.recipientStudentId == currentStudentId)
         .toList();
   }
 
@@ -272,43 +240,95 @@ class WorkspaceStore {
   static void markAllReadForCurrentUser() {
     final now = DateTime.now();
     for (var n in notifications) {
-      if (n.recipientStudentId == currentStudentId) {
+      if (!n.isLocal || n.recipientStudentId == currentStudentId) {
         n.isRead = true;
         n.readAt ??= now;
       }
     }
   }
 
-  /// Deletes a notification only if it is addressed to [actorStudentId].
-  /// Returns false when it does not exist or belongs to someone else.
-  static bool deleteNotificationIfRecipient({
-    required String notificationId,
-    required String actorStudentId,
-  }) {
-    final index = notifications.indexWhere(
-      (n) => n.id == notificationId && n.recipientStudentId == actorStudentId,
-    );
-    if (index < 0) return false;
-    notifications.removeAt(index);
-    return true;
+  /// GET /api/notifications แล้วแทนที่รายการในเครื่อง
+  /// (เก็บเฉพาะ OVERDUE ที่สร้างในเครื่อง และข้ามถ้า server ส่ง OVERDUE ของงานเดียวกันมาแล้ว)
+  static Future<void> loadNotificationsFromServer() async {
+    final list = await NotificationController().getNotifications();
+    final fromServer = list.map(notificationFromApi).toList();
+    final localOnly = notifications
+        .where((n) =>
+            n.isLocal &&
+            !fromServer.any((s) => s.type == 'OVERDUE' && s.taskId == n.taskId))
+        .toList();
+    notifications = [...localOnly, ...fromServer]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  /// Deletes a comment only if [actorStudentId] wrote it.
-  /// Returns false when it does not exist or belongs to someone else.
-  static bool deleteCommentIfAuthor({
-    required TaskItem task,
-    required String commentId,
-    required String actorStudentId,
-  }) {
-    final index = task.comments.indexWhere(
-      (c) => c.id == commentId && c.authorStudentId == actorStudentId,
+  static AppNotification notificationFromApi(NotificationData n) {
+    String? projectName;
+    String? taskTitle;
+    if (n.projectId != null) {
+      for (final p in projects) {
+        if (p.id != n.projectId) continue;
+        projectName = p.title;
+        if (n.taskId != null) {
+          for (final t in p.tasks) {
+            if (t.id == n.taskId) {
+              taskTitle = t.title;
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+    return AppNotification(
+      id: n.id,
+      eventId: n.id,
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      recipientStudentId: currentStudentId, // GET /api/notifications คืนเฉพาะของเรา
+      actorStudentId: n.senderId ?? 'SYSTEM',
+      projectId: n.projectId,
+      taskId: n.taskId,
+      projectName: projectName,
+      taskTitle: taskTitle,
+      createdAt: _parseTime(n.createdAt) ?? DateTime.now(),
+      isRead: n.isRead,
     );
-    if (index < 0) return false;
-    task.comments.removeAt(index);
-    return true;
   }
 
-  /// Centralized dispatcher:
+  /// PATCH /api/notifications/:id/read — อัปเดตในเครื่องก่อน (optimistic)
+  /// ถ้า API ล้มเหลวจะย้อนกลับเป็นยังไม่อ่านแล้วโยน ApiException
+  static Future<void> markNotificationReadViaApi(AppNotification n) async {
+    if (n.isRead) return;
+    final previousReadAt = n.readAt;
+    n.isRead = true;
+    n.readAt = DateTime.now();
+    if (n.isLocal) return;
+    try {
+      await NotificationController().markRead(n.id);
+    } on ApiException {
+      n.isRead = false;
+      n.readAt = previousReadAt;
+      rethrow;
+    }
+  }
+
+  /// PATCH /api/notifications/read-all
+  static Future<void> markAllNotificationsReadViaApi() async {
+    await NotificationController().markAllRead();
+    markAllReadForCurrentUser();
+  }
+
+  /// DELETE /api/notifications/:id (ลบได้เฉพาะของตัวเอง)
+  static Future<void> deleteNotificationViaApi(AppNotification n) async {
+    if (!n.isLocal) {
+      await NotificationController().deleteNotification(n.id);
+    }
+    notifications.removeWhere((x) => x.id == n.id);
+  }
+
+  /// Centralized dispatcher (ใช้เฉพาะแจ้งเตือน OVERDUE ที่คำนวณในเครื่อง —
+  /// แจ้งเตือนอื่นทั้งหมด server เป็นคนสร้างเมื่อมีการเรียก API):
   /// - Enforces no self-notifications (recipient != actor).
   /// - Enforces no duplicate notifications for the same event and recipient.
   static void dispatchNotification({
@@ -350,148 +370,188 @@ class WorkspaceStore {
         taskTitle: taskTitle,
         createdAt: DateTime.now(),
         isRead: false,
+        isLocal: true,
       ),
     );
   }
 
-  /// Triggered after a comment is successfully saved:
-  /// - When project PC comments -> notify assigned member.
-  /// - When a member comments -> notify project PC.
-  /// - Never notify self.
-  static void onCommentAdded({
-    required ProjectModel project,
-    required TaskItem task,
-    required String commentText,
-    required String actorStudentId,
-    required String actorName,
-    String? commentId,
-  }) {
-    final pc = project.members.firstWhere(
-      (m) => m.role == 'PC',
-      orElse: () => project.members.first,
-    );
+  // ==========================================
+  // TASK / COMMENT (เชื่อม API จริง)
+  // ==========================================
+  // หมายเหตุ: การแจ้งเตือน (มอบหมายงาน, เปลี่ยนสถานะ, ส่งงาน, คอมเมนต์, ขยายเวลา)
+  // server สร้างให้เองตอนเรียก API จึงไม่ต้อง dispatch ในเครื่องอีกต่อไป
 
-    final isActorPC = actorStudentId == pc.studentId;
-    final recipientId = isActorPC ? task.assignedStudentId : pc.studentId;
-
-    final preview = commentText.length > 50
-        ? '${commentText.substring(0, 47)}...'
-        : commentText;
-
-    final eventId = 'comment_${task.id}_${commentId ?? DateTime.now().millisecondsSinceEpoch}_$recipientId';
-
-    dispatchNotification(
-      eventId: eventId,
-      type: 'COMMENT',
-      title: 'New Comment',
-      message: '$actorName: "$preview"',
-      recipientStudentId: recipientId,
-      actorStudentId: actorStudentId,
-      projectId: project.id,
-      taskId: task.id,
-      commentId: commentId,
-      projectName: project.title,
-      taskTitle: task.title,
-    );
+  static DateTime? _parseTime(String s) {
+    if (s.isEmpty) return null;
+    return DateTime.tryParse(s)?.toLocal();
   }
 
-  /// Triggered when a task is assigned or reassigned:
-  /// - Notifies the new assignee (if not self).
-  static void onTaskAssignedOrReassigned({
-    required ProjectModel project,
-    required TaskItem task,
-    required String newAssigneeStudentId,
-    required String actorStudentId,
-  }) {
-    final actorName = resolveMemberName(actorStudentId);
-    final eventId = 'assign_${task.id}_${newAssigneeStudentId}_${DateTime.now().millisecondsSinceEpoch}';
-
-    dispatchNotification(
-      eventId: eventId,
-      type: 'TASK_ASSIGNED',
-      title: 'Task Assigned',
-      message: '$actorName assigned you "${task.title}".',
-      recipientStudentId: newAssigneeStudentId,
-      actorStudentId: actorStudentId,
-      projectId: project.id,
-      taskId: task.id,
-      projectName: project.title,
-      taskTitle: task.title,
-    );
+  /// เขียนข้อมูลจาก API ลงใน TaskItem เดิม (คงอ็อบเจกต์/คอมเมนต์ไว้)
+  static void applyTaskData(TaskItem t, TaskData d) {
+    t.title = d.title;
+    t.description = d.description;
+    t.assignedStudentId = d.assignedTo ?? '';
+    t.assignedTo = d.assignedName.isNotEmpty
+        ? d.assignedName
+        : (d.assignedTo == null ? '' : resolveMemberName(d.assignedTo!));
+    t.dueDate = d.dueDate;
+    t.status = d.status;
+    t.submissionUrl = d.submissionUrl;
+    t.submittedAt = _parseTime(d.submittedAt);
+    t.completedAt = _parseTime(d.completedAt);
   }
 
-  /// Triggered when a member submits a deliverable URL:
-  /// - Notifies the project PC (if not self).
-  static void onWorkSubmitted({
-    required ProjectModel project,
-    required TaskItem task,
-    required String actorStudentId,
-  }) {
-    final pc = project.members.firstWhere(
-      (m) => m.role == 'PC',
-      orElse: () => project.members.first,
+  static TaskItem taskFromApi(TaskData d) {
+    final t = TaskItem(
+      id: d.id,
+      title: d.title,
+      description: d.description,
+      assignedTo: '',
+      dueDate: d.dueDate,
     );
-    final actorName = resolveMemberName(actorStudentId);
-    final eventId = 'submit_${task.id}_${DateTime.now().millisecondsSinceEpoch}';
-
-    dispatchNotification(
-      eventId: eventId,
-      type: 'SUBMISSION',
-      title: 'Deliverable Submitted',
-      message: '$actorName submitted work for "${task.title}".',
-      recipientStudentId: pc.studentId,
-      actorStudentId: actorStudentId,
-      projectId: project.id,
-      taskId: task.id,
-      projectName: project.title,
-      taskTitle: task.title,
-    );
+    applyTaskData(t, d);
+    return t;
   }
 
-  /// Triggered when task status changes:
-  /// - Member changes status -> notify PC.
-  /// - PC changes status -> notify assignee.
-  /// - Never notify self.
-  static void onStatusChanged({
-    required ProjectModel project,
-    required TaskItem task,
-    required String newStatus,
-    required String actorStudentId,
-  }) {
-    final pc = project.members.firstWhere(
-      (m) => m.role == 'PC',
-      orElse: () => project.members.first,
-    );
-    final isActorPC = actorStudentId == pc.studentId;
-    final recipientId = isActorPC ? task.assignedStudentId : pc.studentId;
-    final actorName = resolveMemberName(actorStudentId);
-
-    final eventId = 'status_${task.id}_${newStatus}_${DateTime.now().millisecondsSinceEpoch}';
-
-    dispatchNotification(
-      eventId: eventId,
-      type: 'STATUS_CHANGED',
-      title: 'Task Status Updated',
-      message: '$actorName updated "${task.title}" to ${formatStatus(newStatus)}.',
-      recipientStudentId: recipientId,
-      actorStudentId: actorStudentId,
-      projectId: project.id,
-      taskId: task.id,
-      projectName: project.title,
-      taskTitle: task.title,
-    );
+  /// รวมงานจาก server เข้ากับงานเดิม: id เดิมอัปเดตในอ็อบเจกต์เดิม, id ใหม่สร้างใหม่,
+  /// งานที่ server ไม่มีแล้วจะหายไป
+  static List<TaskItem> _mergeTasks(List<TaskItem>? old, List<TaskData> data) {
+    final byId = {for (final t in old ?? const <TaskItem>[]) t.id: t};
+    return data.map((d) {
+      final existing = byId[d.id];
+      if (existing == null) return taskFromApi(d);
+      applyTaskData(existing, d);
+      return existing;
+    }).toList();
   }
 
-  /// Triggered when PC extends a deadline:
-  /// - Notifies the assignee with the new deadline.
-  /// - Resolves outdated overdue alerts for this task.
-  static bool extendTaskDeadline({
+  static CommentItem commentFromApi(CommentData c) => CommentItem(
+        id: c.id.toString(),
+        authorStudentId: c.authorId,
+        authorName: c.authorName.isNotEmpty ? c.authorName : c.authorId,
+        authorRole: c.authorRole,
+        text: c.text,
+        createdAt: _parseTime(c.createdAt) ?? DateTime.now(),
+      );
+
+  /// GET /api/projects/:id/tasks ของโปรเจคเดียว แล้วอัปเดตในอ็อบเจกต์เดิม
+  static Future<void> refreshProjectTasks(String projectId) async {
+    final idx = projects.indexWhere((p) => p.id == projectId);
+    if (idx < 0) return;
+    final data = await TaskController().getTasks(projectId);
+    final merged = _mergeTasks(projects[idx].tasks, data);
+    projects[idx].tasks
+      ..clear()
+      ..addAll(merged);
+  }
+
+  /// POST /api/projects/:id/tasks (PC เท่านั้น) แล้วเพิ่มงานเข้าโปรเจคในเครื่อง
+  static Future<TaskItem> createTaskViaApi(
+    ProjectModel project, {
+    required String title,
+    required String assigneeStudentId,
+    String? description,
+  }) async {
+    final tc = TaskController();
+    final due = project.deadline.trim();
+    final id = await tc.createTask(
+      project.id,
+      title: title,
+      description: description,
+      assignedTo: assigneeStudentId.isEmpty ? null : assigneeStudentId,
+      dueDate: due.isEmpty ? null : due,
+    );
+    TaskItem task;
+    try {
+      task = taskFromApi(await tc.getTask(id));
+    } on ApiException {
+      // สร้างสำเร็จแล้วแต่ดึงซ้ำไม่ได้ -> ใช้ค่าที่เรามีไปก่อน
+      task = TaskItem(
+        id: id,
+        title: title,
+        description: description ?? '',
+        assignedTo: assigneeStudentId.isEmpty ? '' : resolveMemberName(assigneeStudentId),
+        assignedStudentId: assigneeStudentId,
+        dueDate: due,
+      );
+    }
+    project.tasks.add(task);
+    return task;
+  }
+
+  /// PUT /api/tasks/:id (+ PATCH /api/tasks/:id/assign ถ้าเปลี่ยนผู้รับงาน)
+  /// ส่งเฉพาะช่องที่เปลี่ยน — เปลี่ยน due date server จะแจ้งผู้รับงานเอง
+  static Future<void> updateTaskViaApi(
+    TaskItem task, {
+    required String title,
+    required String description,
+    required String dueDate,
+    required String assigneeStudentId,
+    required String assigneeName,
+  }) async {
+    final tc = TaskController();
+    final dueChanged = dueDate != task.dueDate;
+    if (title != task.title || description != task.description || dueChanged) {
+      await tc.updateTask(
+        task.id,
+        title: title != task.title ? title : null,
+        description: description != task.description ? description : null,
+        dueDate: dueChanged ? dueDate : null,
+      );
+      task.title = title;
+      task.description = description;
+      task.dueDate = dueDate;
+      if (dueChanged) {
+        notifications.removeWhere(
+            (n) => n.isLocal && n.taskId == task.id && n.type == 'OVERDUE');
+      }
+    }
+    if (assigneeStudentId.isNotEmpty && assigneeStudentId != task.assignedStudentId) {
+      await tc.assignTask(task.id, assigneeStudentId);
+      task.assignedStudentId = assigneeStudentId;
+      task.assignedTo = assigneeName;
+    }
+  }
+
+  /// PATCH /api/tasks/:id/status (PC หรือผู้รับงาน)
+  static Future<void> updateStatusViaApi(TaskItem task, String status) async {
+    await TaskController().updateStatus(task.id, status);
+    task.setStatus(status);
+  }
+
+  /// POST /api/tasks/:id/submission แล้วตั้งสถานะ DONE (ถ้า server ยังไม่ได้ตั้งให้เอง)
+  static Future<void> submitWorkViaApi(TaskItem task, String url) async {
+    final tc = TaskController();
+    await tc.submitWork(task.id, url);
+    task.submissionUrl = url;
+    task.submittedAt = DateTime.now();
+    var alreadyDone = false;
+    try {
+      alreadyDone = (await tc.getTask(task.id)).status == 'DONE';
+    } on ApiException {
+      alreadyDone = false;
+    }
+    if (!alreadyDone) {
+      await tc.updateStatus(task.id, 'DONE');
+    }
+    task.setStatus('DONE');
+  }
+
+  /// DELETE /api/tasks/:id (PC เท่านั้น)
+  static Future<void> deleteTaskViaApi(ProjectModel project, TaskItem task) async {
+    await TaskController().deleteTask(task.id);
+    project.tasks.remove(task);
+    notifications.removeWhere((n) => n.isLocal && n.taskId == task.id);
+  }
+
+  /// PC ขยายเวลางาน: ตรวจเงื่อนไขในเครื่อง แล้ว PUT /api/tasks/:id (server แจ้งผู้รับงานเอง)
+  /// คืน false ถ้าไม่ผ่านเงื่อนไข, โยน ApiException ถ้า API ล้มเหลว
+  static Future<bool> extendTaskDeadline({
     required ProjectModel project,
     required TaskItem task,
     required String newDueDate,
     required String actorStudentId,
-  }) {
-    // 1. Strict PC enforcement
+  }) async {
     if (!project.isCurrentUserPC) return false;
 
     final parsedNew = DateTime.tryParse(newDueDate.trim());
@@ -501,33 +561,36 @@ class WorkspaceStore {
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
     if (parsedNew.isBefore(todayStart)) return false;
+    if (parsedOld != null && !parsedNew.isAfter(parsedOld)) return false;
 
-    if (parsedOld != null && !parsedNew.isAfter(parsedOld)) {
-      return false;
-    }
-
-    // 2. Update task deadline while preserving progress status
+    await TaskController().updateTask(task.id, dueDate: newDueDate.trim());
     task.dueDate = newDueDate.trim();
-
-    // 3. Resolve any outdated overdue alerts for this task
-    notifications.removeWhere((n) => n.taskId == task.id && n.type == 'OVERDUE');
-
-    // 4. Notify assignee (if not self)
-    final eventId = 'extend_${task.id}_${task.dueDate}';
-    dispatchNotification(
-      eventId: eventId,
-      type: 'DEADLINE_EXTENDED',
-      title: 'Deadline Extended',
-      message: 'The deadline for "${task.title}" was extended to ${task.dueDate}.',
-      recipientStudentId: task.assignedStudentId,
-      actorStudentId: actorStudentId,
-      projectId: project.id,
-      taskId: task.id,
-      projectName: project.title,
-      taskTitle: task.title,
-    );
-
+    notifications.removeWhere(
+        (n) => n.isLocal && n.taskId == task.id && n.type == 'OVERDUE');
     return true;
+  }
+
+  /// GET /api/tasks/:id/comments แล้วแทนที่คอมเมนต์ในงาน
+  static Future<void> loadCommentsForTask(TaskItem task) async {
+    final list = await CommentController().getComments(task.id);
+    task.comments
+      ..clear()
+      ..addAll(list.map(commentFromApi));
+  }
+
+  /// POST /api/tasks/:id/comments — server แจ้งเตือนอีกฝ่ายเอง
+  static Future<CommentItem> addCommentViaApi(TaskItem task, String text) async {
+    final c = commentFromApi(await CommentController().addComment(task.id, text));
+    task.comments.add(c);
+    return c;
+  }
+
+  /// DELETE /api/comments/:id (ลบได้เฉพาะของตัวเอง — server ตรวจให้)
+  static Future<void> deleteCommentViaApi(TaskItem task, CommentItem comment) async {
+    final id = int.tryParse(comment.id);
+    if (id == null) throw ApiException('Invalid comment id');
+    await CommentController().deleteComment(id);
+    task.comments.removeWhere((c) => c.id == comment.id);
   }
 
   /// Checks deadlines for all tasks across all projects:
@@ -581,32 +644,6 @@ class WorkspaceStore {
             );
           }
         }
-      }
-    }
-  }
-
-  /// Broadcast announcement to all project members:
-  /// - Only PC can broadcast.
-  /// - Never sends to the sender.
-  static void onProjectAnnouncement({
-    required ProjectModel project,
-    required String title,
-    required String message,
-    required String actorStudentId,
-  }) {
-    for (var member in project.members) {
-      if (member.studentId != actorStudentId) {
-        final eventId = 'announcement_${project.id}_${DateTime.now().millisecondsSinceEpoch}_${member.studentId}';
-        dispatchNotification(
-          eventId: eventId,
-          type: 'ANNOUNCEMENT',
-          title: 'Project Announcement: ${project.title}',
-          message: '$title: $message',
-          recipientStudentId: member.studentId,
-          actorStudentId: actorStudentId,
-          projectId: project.id,
-          projectName: project.title,
-        );
       }
     }
   }

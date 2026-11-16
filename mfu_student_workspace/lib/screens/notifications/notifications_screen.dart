@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../models/app_notification.dart';
 import '../../models/project_model.dart';
@@ -21,51 +22,73 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   // 'ALL' or 'UNREAD'
   String _activeFilter = 'ALL';
 
-  void _markAllAsRead() {
-    WorkspaceStore.markAllReadForCurrentUser();
+  void _snack(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: isError ? AppColors.danger : AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+  }
+
+  /// GET /api/notifications (pull-to-refresh / ปุ่ม Refresh)
+  Future<void> _refresh() async {
+    try {
+      await WorkspaceStore.loadNotificationsFromServer();
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+    }
+    WorkspaceStore.checkOverdueTasksAndNotify();
+    if (!mounted) return;
+    setState(() {});
+    widget.onRefresh();
+  }
+
+  /// PATCH /api/notifications/read-all
+  Future<void> _markAllAsRead() async {
+    try {
+      await WorkspaceStore.markAllNotificationsReadViaApi();
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
     // Switch to 'ALL' tab so all notifications remain visible after being marked as read
     setState(() {
       _activeFilter = 'ALL';
     });
     widget.onRefresh();
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('All notifications marked as read'),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
-    );
+    _snack('All notifications marked as read');
   }
 
-  void _deleteNotification(AppNotification n) {
-    // Only the recipient may delete a notification (same rule as the database API).
-    final removed = WorkspaceStore.deleteNotificationIfRecipient(
-      notificationId: n.id,
-      actorStudentId: WorkspaceStore.currentStudentId,
-    );
-    if (!removed) return;
+  /// DELETE /api/notifications/:id (ลบได้เฉพาะของตัวเอง)
+  Future<void> _deleteNotification(AppNotification n) async {
+    try {
+      await WorkspaceStore.deleteNotificationViaApi(n);
+    } on ApiException catch (e) {
+      _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
     setState(() {});
     widget.onRefresh();
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Notification deleted'),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
-    );
+    _snack('Notification deleted');
   }
 
   void _handleNotificationTap(AppNotification n) async {
     // 1. Immediately mark notification as read and update unread badges
+    // (PATCH /api/notifications/:id/read — อัปเดตในเครื่องทันที ถ้า API พลาดจะย้อนกลับ)
     if (!n.isRead) {
-      setState(() {
-        n.isRead = true;
-        n.readAt = DateTime.now();
+      WorkspaceStore.markNotificationReadViaApi(n).catchError((_) {
+        if (mounted) setState(() {});
+        widget.onRefresh();
       });
+      setState(() {});
       widget.onRefresh();
     }
 
@@ -109,6 +132,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       }
 
       if (n.taskId != null) {
+        // งานอาจเพิ่งถูกสร้างโดยคนอื่น: ถ้ายังไม่มีในเครื่องให้ดึงจาก API ก่อน
+        if (!targetProject.tasks.any((t) => t.id == n.taskId)) {
+          try {
+            await WorkspaceStore.refreshProjectTasks(targetProject.id);
+          } on ApiException catch (_) {}
+          if (!mounted) return;
+        }
+
         // Find task by explicit taskId (never parse titles or text)
         TaskItem? targetTask;
         for (final t in targetProject.tasks) {
@@ -212,6 +243,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: _refresh,
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: TextButton.icon(
@@ -280,11 +316,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       )
                     : RefreshIndicator(
                         color: AppColors.primary,
-                        onRefresh: () async {
-                          WorkspaceStore.checkOverdueTasksAndNotify();
-                          setState(() {});
-                          widget.onRefresh();
-                        },
+                        onRefresh: _refresh,
                         child: ListView.separated(
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),

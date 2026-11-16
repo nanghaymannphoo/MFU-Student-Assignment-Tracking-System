@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/deadline_helpers.dart';
 import '../../data/workspace_store.dart';
@@ -18,6 +19,29 @@ class MyTasksScreen extends StatefulWidget {
 class _MyTasksScreenState extends State<MyTasksScreen> {
   // 'PENDING' (default) or 'DONE'
   String _activeFilter = 'PENDING';
+
+  /// โหลดโปรเจค + งานล่าสุดจาก API (GET /api/projects, /projects/:id/tasks)
+  Future<void> _refresh() async {
+    try {
+      await WorkspaceStore.loadProjectsFromServer();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(e.message),
+              backgroundColor: AppColors.danger,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
+    }
+    WorkspaceStore.checkOverdueTasksAndNotify();
+    if (!mounted) return;
+    setState(() {});
+    widget.onRefresh?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -94,11 +118,7 @@ class _MyTasksScreenState extends State<MyTasksScreen> {
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh_rounded),
-            onPressed: () {
-              WorkspaceStore.checkOverdueTasksAndNotify();
-              setState(() {});
-              widget.onRefresh?.call();
-            },
+            onPressed: _refresh,
           ),
         ],
       ),
@@ -107,11 +127,7 @@ class _MyTasksScreenState extends State<MyTasksScreen> {
           constraints: const BoxConstraints(maxWidth: 960),
           child: RefreshIndicator(
             color: AppColors.primary,
-            onRefresh: () async {
-              WorkspaceStore.checkOverdueTasksAndNotify();
-              setState(() {});
-              widget.onRefresh?.call();
-            },
+            onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
