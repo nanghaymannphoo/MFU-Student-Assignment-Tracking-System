@@ -3,6 +3,8 @@ import '../../controller/api_controller.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/date_picker_utils.dart';
 import '../../core/utils/status_helpers.dart';
+import '../../models/api_models.dart';
+import '../../models/assigned_task_entry.dart';
 import '../../models/project_model.dart';
 import '../../models/task_item.dart';
 import '../../models/team_member.dart';
@@ -28,6 +30,26 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   // 0 = My Projects (default), 1 = Deadlines
   int _selectedDashboardTab = 0;
+
+  // สรุปงานของฉันจาก GET /api/dashboard (null = ยังโหลดไม่เสร็จ/โหลดไม่สำเร็จ -> ใช้ค่าจากงานที่มอบหมายให้ฉันในเครื่องแทน)
+  final _projectController = ProjectController();
+  DashboardModel? _dashboard;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    try {
+      final data = await _projectController.getDashboard();
+      if (!mounted) return;
+      setState(() => _dashboard = data);
+    } on ApiException catch (_) {
+      // โหลดไม่สำเร็จ: คงค่าเดิม/ใช้ fallback จากงานของฉันในเครื่อง
+    }
+  }
 
   void _showCreateProjectSheet() {
     final formKey = GlobalKey<FormState>();
@@ -238,21 +260,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
           builder: (modalContext, setModalState) {
             // Find all tasks with this status or condition across all projects
             final List<Map<String, dynamic>> tasksWithStatus = [];
-            for (var project in WorkspaceStore.projects) {
-              for (var task in project.tasks) {
-                if (statusKey == 'OVERDUE') {
-                  if (isTaskOverdue(task)) {
-                    tasksWithStatus.add({
-                      'project': project,
-                      'task': task,
-                    });
-                  }
-                } else if (task.status == statusKey) {
+            for (final AssignedTaskEntry entry in WorkspaceStore.getAssignedTasksForCurrentUser()) {
+              final project = entry.project;
+              final task = entry.task;
+              if (statusKey == 'OVERDUE') {
+                if (isTaskOverdue(task)) {
                   tasksWithStatus.add({
                     'project': project,
                     'task': task,
                   });
                 }
+              } else if (task.status == statusKey) {
+                tasksWithStatus.add({
+                  'project': project,
+                  'task': task,
+                });
               }
             }
             // Sort: overdue tasks first, then by due date
@@ -397,6 +419,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       );
                                       setModalState(() {});
                                       setState(() {});
+                                      _loadDashboard();
                                       widget.onRefresh();
                                     },
                                     child: Padding(
@@ -483,14 +506,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final allTasks = WorkspaceStore.projects.expand((p) => p.tasks).toList();
-    final todoCount = allTasks.where((t) => t.status == 'TODO').length;
-    final inProgressCount = allTasks.where((t) => t.status == 'IN_PROGRESS').length;
-    final doneCount = allTasks.where((t) => t.status == 'DONE').length;
-    final overdueCount = allTasks.where((t) => isTaskOverdue(t)).length;
+    // ตัวเลขการ์ด Workload = งานที่มอบหมายให้ฉันเท่านั้น (จาก GET /api/dashboard)
+    // ถ้ายังไม่ได้ข้อมูลจาก server ให้คำนวณจากงานของฉันในเครื่องแทน
+    final dashboard = _dashboard;
+    final int todoCount;
+    final int inProgressCount;
+    final int doneCount;
+    final int overdueCount;
+    final int totalTasks;
+    if (dashboard != null) {
+      todoCount = dashboard.todo;
+      inProgressCount = dashboard.inProgress;
+      doneCount = dashboard.done;
+      overdueCount = dashboard.overdue;
+      totalTasks = dashboard.totalTasks;
+    } else {
+      final myTasks = WorkspaceStore.getAssignedTasksForCurrentUser().map((e) => e.task).toList();
+      todoCount = myTasks.where((t) => t.status == 'TODO').length;
+      inProgressCount = myTasks.where((t) => t.status == 'IN_PROGRESS').length;
+      doneCount = myTasks.where((t) => t.status == 'DONE').length;
+      overdueCount = myTasks.where((t) => isTaskOverdue(t)).length;
+      totalTasks = myTasks.length;
+    }
 
     // Overdue is an overlapping condition: do not add it again when calculating total or completion
-    final totalTasks = allTasks.length;
     final overallPercent = totalTasks == 0 ? 0 : ((doneCount / totalTasks) * 100).round();
 
     // Collect pending incomplete tasks across all projects
@@ -587,6 +626,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               try {
                 await WorkspaceStore.loadProjectsFromServer();
               } on ApiException catch (_) {}
+              await _loadDashboard();
               WorkspaceStore.checkOverdueTasksAndNotify();
               if (!mounted) return;
               setState(() {});
