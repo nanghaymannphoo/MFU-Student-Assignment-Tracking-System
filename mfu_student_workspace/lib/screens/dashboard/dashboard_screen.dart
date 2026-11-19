@@ -536,7 +536,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final List<Map<String, dynamic>> pendingDeadlines = [];
     for (var project in WorkspaceStore.projects) {
       for (var task in project.tasks) {
-        if (task.status != 'DONE') {
+        // เฉพาะงานที่มอบหมายให้ Student ID ของผู้ใช้ที่ login อยู่
+        if (task.status != 'DONE' && task.assignedStudentId == WorkspaceStore.currentStudentId) {
           pendingDeadlines.add({
             'project': project,
             'task': task,
