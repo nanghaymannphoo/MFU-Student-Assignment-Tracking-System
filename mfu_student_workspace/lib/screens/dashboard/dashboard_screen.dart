@@ -696,7 +696,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Team Projects Workload',
+                    'My Tasks Overview',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -705,7 +705,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 2),
                   const Text(
-                    'All team members across your projects',
+                    'Tasks assigned to you across all projects',
                     style: TextStyle(
                       fontSize: 11,
                       color: AppColors.textSecondary,
